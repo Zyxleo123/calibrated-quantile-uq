@@ -26,7 +26,7 @@ from losses import (
     interval_loss,
     batch_interval_loss,
 )
-
+from quantile_models import average_calibration
 
 def get_loss_fn(loss_name):
     if loss_name == "qr":
@@ -60,6 +60,10 @@ def get_loss_fn(loss_name):
 
 def parse_args():
     parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "--ece_thres", type=float, default=0.1, help="Maximum ECE threshold we would tolarate"
+    )
 
     parser.add_argument(
         "--num_ens", type=int, default=1, help="number of members in ensemble"
@@ -312,6 +316,10 @@ if __name__ == "__main__":
     tr_loss_list = []
     va_loss_list = []
     te_loss_list = []
+    va_sharp_list = []
+    va_ece_list = []
+    best_sharp_score = float("inf")
+    best_model_ens = None
 
     # setting batch groupings
     group_list = discretize_domain(x_tr.numpy(), args.bs)
@@ -381,7 +389,7 @@ if __name__ == "__main__":
 
         # Validation loss
         x_va, y_va = x_va.to(args.device), y_va.to(args.device)
-        va_te_q_list = torch.linspace(0.01, 0.99, 99)
+        va_te_q_list = torch.linspace(0.01, 0.99, 99).to(args.device)
         ep_va_loss = model_ens.update_va_loss(
             loss_fn,
             x_va,
@@ -415,6 +423,38 @@ if __name__ == "__main__":
             print("Val loss {}".format(ep_va_loss))
             print("Test loss {}".format(ep_te_loss))
 
+        # ECE thresholding and best sharpness model selection
+        model_ens.use_device(torch.device("cpu"))
+        _, sharp_score, _, _, _, _ = test_uq(
+            model_ens,
+            x_va.cpu(),
+            y_va.cpu(),
+            va_te_q_list.cpu(),
+            y_range,
+            recal_model=None,
+            recal_type=None,
+        )
+        ece = average_calibration(
+            model_ens,
+            x_va.cpu(),
+            y_va.cpu(),
+            args=Namespace(
+                exp_props=va_te_q_list.cpu(),
+                device=torch.device("cpu"),
+                metric="cal_q"
+            )
+        )
+        model_ens.use_device(torch.device("cuda"))
+        va_sharp_list.append(sharp_score)
+        va_ece_list.append(ece)
+        if ece < args.ece_thres:
+            print(f"EP: {ep}")
+            print(f"\tNew admissable ECE: {ece}")
+            if sharp_score < best_sharp_score:
+                best_sharp_score = sharp_score
+                best_model_ens = deepcopy(model_ens)
+                print(f"\tNew best sharpness found: {best_sharp_score}")
+
     # Finished training
     # Move everything to cpu
     x_tr, y_tr, x_va, y_va, x_te, y_te = (
@@ -426,6 +466,39 @@ if __name__ == "__main__":
         y_te.cpu(),
     )
     model_ens.use_device(torch.device("cpu"))
+
+    # Initialize recalibration-related variables to None so save_dic can be constructed
+    # even when args.recal is False.
+    recal_model = None
+    recal_exp_props = None
+
+    recal_va_cali_score = None
+    recal_va_sharp_score = None
+    recal_va_obs_props = None
+    recal_va_q_preds = None
+    recal_va_g_cali_scores = None
+    recal_va_scoring_rules = None
+
+    recal_te_cali_score = None
+    recal_te_sharp_score = None
+    recal_te_obs_props = None
+    recal_te_q_preds = None
+    recal_te_g_cali_scores = None
+    recal_te_scoring_rules = None
+
+    recal_va_cali_score_best = None
+    recal_va_sharp_score_best = None
+    recal_va_obs_props_best = None
+    recal_va_q_preds_best = None
+    recal_va_g_cali_scores_best = None
+    recal_va_scoring_rules_best = None
+
+    recal_te_cali_score_best = None
+    recal_te_sharp_score_best = None
+    recal_te_obs_props_best = None
+    recal_te_q_preds_best = None
+    recal_te_g_cali_scores_best = None
+    recal_te_scoring_rules_best = None
 
     # Test UQ on val
     print("Testing UQ on val")
@@ -517,39 +590,200 @@ if __name__ == "__main__":
             test_group_cal=True,
         )
 
-    save_dic = {
-        "tr_loss_list": tr_loss_list,  # loss lists
-        "va_loss_list": va_loss_list,
-        "te_loss_list": te_loss_list,
-        "va_cali_score": va_cali_score,  # test on va
-        "va_sharp_score": va_sharp_score,
-        "va_exp_props": va_exp_props,
-        "va_obs_props": va_obs_props,
-        "va_q_preds": va_q_preds,
-        "te_cali_score": te_cali_score,  # test on te
-        "te_sharp_score": te_sharp_score,
-        "te_exp_props": te_exp_props,
-        "te_obs_props": te_obs_props,
-        "te_q_preds": te_q_preds,
-        "te_g_cali_scores": te_g_cali_scores,
-        "te_scoring_rules": te_scoring_rules,
-        "recal_model": recal_model,   # recalibration model
-        "recal_exp_props": recal_exp_props,
-        "recal_va_cali_score": recal_va_cali_score,
-        "recal_va_sharp_score": recal_va_sharp_score,
-        "recal_va_obs_props": recal_va_obs_props,
-        "recal_va_q_preds": recal_va_q_preds,
-        "recal_va_g_cali_scores": recal_va_g_cali_scores,
-        "recal_va_scoring_rules": recal_va_scoring_rules,
-        "recal_te_cali_score": recal_te_cali_score,
-        "recal_te_sharp_score": recal_te_sharp_score,
-        "recal_te_obs_props": recal_te_obs_props,
-        "recal_te_q_preds": recal_te_q_preds,
-        "recal_te_g_cali_scores": recal_te_g_cali_scores,
-        "recal_te_scoring_rules": recal_te_scoring_rules,
-        "args": args,
-        "model": model_ens,
-    }
+    # Only perform the extra validation/test and recalibration for the best model
+    # if a best model passing the ECE threshold was found during training.
+    if best_model_ens is not None:
+        best_model_ens.use_device(torch.device("cpu"))
+        print("Testing UQ on val with best model")
+        va_exp_props_best = torch.linspace(-2.0, 3.0, 501)
+        va_cali_score_best, va_sharp_score_best, va_obs_props_best, va_q_preds_best, _, _ = test_uq(
+            best_model_ens,
+            x_va,
+            y_va,
+            va_exp_props_best,
+            y_range,
+            recal_model=None,
+            recal_type=None,
+        )
+        reduced_va_q_preds_best = va_q_preds_best[
+            :, get_q_idx(va_exp_props_best, 0.01) : get_q_idx(va_exp_props_best, 0.99) + 1
+        ]
+
+        # Test UQ on test with best model
+        print("Testing UQ on test with best model")
+        te_exp_props_best = torch.linspace(0.01, 0.99, 99)
+        (
+            te_cali_score_best,
+            te_sharp_score_best,
+            te_obs_props_best,
+            te_q_preds_best,
+            te_g_cali_scores_best,
+            te_scoring_rules_best,
+        ) = test_uq(
+            best_model_ens,
+            x_te,
+            y_te,
+            te_exp_props_best,
+            y_range,
+            recal_model=None,
+            recal_type=None,
+            test_group_cal=True,
+        )
+
+        # Same recalibration procedure for best model
+        if args.recal:
+            recal_model = iso_recal(va_exp_props_best, va_obs_props_best)
+            recal_exp_props = torch.linspace(0.01, 0.99, 99)
+
+            (
+                recal_va_cali_score_best,
+                recal_va_sharp_score_best,
+                recal_va_obs_props_best,
+                recal_va_q_preds_best,
+                recal_va_g_cali_scores_best,
+                recal_va_scoring_rules_best
+            ) = test_uq(
+                best_model_ens,
+                x_va,
+                y_va,
+                recal_exp_props,
+                y_range,
+                recal_model=recal_model,
+                recal_type="sklearn",
+                test_group_cal=True,
+            )
+
+            (
+                recal_te_cali_score_best,
+                recal_te_sharp_score_best,
+                recal_te_obs_props_best,
+                recal_te_q_preds_best,
+                recal_te_g_cali_scores_best,
+                recal_te_scoring_rules_best
+            ) = test_uq(
+                best_model_ens,
+                x_te,
+                y_te,
+                recal_exp_props,
+                y_range,
+                recal_model=recal_model,
+                recal_type="sklearn",
+                test_group_cal=True,
+            )
+
+    # Build save_dic conditionally: only include the new diagnostics and best-model fields
+    # when a best model was found. If none passed ECE threshold, do not add new keys.
+    if best_model_ens is not None:
+        # Add new stats (va_sharp_list, va_ece_list, best_sharp_score, best_model) to saved results.
+        save_dic = {
+            "tr_loss_list": tr_loss_list,  # loss lists
+            "va_loss_list": va_loss_list,
+            "te_loss_list": te_loss_list,
+
+            "va_cali_score": va_cali_score,  # test on va
+            "va_sharp_score": va_sharp_score,
+            "va_exp_props": va_exp_props,
+            "va_obs_props": va_obs_props,
+            "va_q_preds": va_q_preds,
+            "te_cali_score": te_cali_score,  # test on te
+            "te_sharp_score": te_sharp_score,
+            "te_exp_props": te_exp_props,
+            "te_obs_props": te_obs_props,
+            "te_q_preds": te_q_preds,
+            "te_g_cali_scores": te_g_cali_scores,
+            "te_scoring_rules": te_scoring_rules,
+
+            # recalibration model (may be None if not computed)
+            "recal_model": recal_model,
+            "recal_exp_props": recal_exp_props,
+            "recal_va_cali_score": recal_va_cali_score,
+            "recal_va_sharp_score": recal_va_sharp_score,
+            "recal_va_obs_props": recal_va_obs_props,
+            "recal_va_q_preds": recal_va_q_preds,
+            "recal_va_g_cali_scores": recal_va_g_cali_scores,
+            "recal_va_scoring_rules": recal_va_scoring_rules,
+            "recal_te_cali_score": recal_te_cali_score,
+            "recal_te_sharp_score": recal_te_sharp_score,
+            "recal_te_obs_props": recal_te_obs_props,
+            "recal_te_q_preds": recal_te_q_preds,
+            "recal_te_g_cali_scores": recal_te_g_cali_scores,
+            "recal_te_scoring_rules": recal_te_scoring_rules,
+
+            # best-model (may be fallback) test results
+            "va_cali_score_best": va_cali_score_best,
+            "va_sharp_score_best": va_sharp_score_best,
+            "va_exp_props_best": va_exp_props_best,
+            "va_obs_props_best": va_obs_props_best,
+            "va_q_preds_best": va_q_preds_best,
+            "te_cali_score_best": te_cali_score_best,
+            "te_sharp_score_best": te_sharp_score_best,
+            "te_exp_props_best": te_exp_props_best,
+            "te_obs_props_best": te_obs_props_best,
+            "te_q_preds_best": te_q_preds_best,
+            "te_g_cali_scores_best": te_g_cali_scores_best,
+            "te_scoring_rules_best": te_scoring_rules_best,
+
+            "recal_va_cali_score_best": recal_va_cali_score_best,
+            "recal_va_sharp_score_best": recal_va_sharp_score_best,
+            "recal_va_obs_props_best": recal_va_obs_props_best,
+            "recal_va_q_preds_best": recal_va_q_preds_best,
+            "recal_va_g_cali_scores_best": recal_va_g_cali_scores_best,
+            "recal_va_scoring_rules_best": recal_va_scoring_rules_best,
+            "recal_te_cali_score_best": recal_te_cali_score_best,
+            "recal_te_sharp_score_best": recal_te_sharp_score_best,
+            "recal_te_obs_props_best": recal_te_obs_props_best,
+            "recal_te_q_preds_best": recal_te_q_preds_best,
+            "recal_te_g_cali_scores_best": recal_te_g_cali_scores_best,
+            "recal_te_scoring_rules_best": recal_te_scoring_rules_best,
+
+            # new diagnostics: per-epoch validation sharpness and ECE history, and best sharp score found
+            "va_sharp_list": va_sharp_list,
+            "va_ece_list": va_ece_list,
+            "best_sharp_score": best_sharp_score,
+            "best_model": best_model_ens,
+
+            "args": args,
+            "model": model_ens,
+        }
+    else:
+        # No model passed the ECE threshold: keep original keys only (no extra/best-model keys).
+        save_dic = {
+            "tr_loss_list": tr_loss_list,  # loss lists
+            "va_loss_list": va_loss_list,
+            "te_loss_list": te_loss_list,
+
+            "va_cali_score": va_cali_score,  # test on va
+            "va_sharp_score": va_sharp_score,
+            "va_exp_props": va_exp_props,
+            "va_obs_props": va_obs_props,
+            "va_q_preds": va_q_preds,
+            "te_cali_score": te_cali_score,  # test on te
+            "te_sharp_score": te_sharp_score,
+            "te_exp_props": te_exp_props,
+            "te_obs_props": te_obs_props,
+            "te_q_preds": te_q_preds,
+            "te_g_cali_scores": te_g_cali_scores,
+            "te_scoring_rules": te_scoring_rules,
+
+            # recalibration model (may be None if not computed)
+            "recal_model": recal_model,
+            "recal_exp_props": recal_exp_props,
+            "recal_va_cali_score": recal_va_cali_score,
+            "recal_va_sharp_score": recal_va_sharp_score,
+            "recal_va_obs_props": recal_va_obs_props,
+            "recal_va_q_preds": recal_va_q_preds,
+            "recal_va_g_cali_scores": recal_va_g_cali_scores,
+            "recal_va_scoring_rules": recal_va_scoring_rules,
+            "recal_te_cali_score": recal_te_cali_score,
+            "recal_te_sharp_score": recal_te_sharp_score,
+            "recal_te_obs_props": recal_te_obs_props,
+            "recal_te_q_preds": recal_te_q_preds,
+            "recal_te_g_cali_scores": recal_te_g_cali_scores,
+            "recal_te_scoring_rules": recal_te_scoring_rules,
+
+            "args": args,
+            "model": model_ens,
+        }
 
     with open(save_file_name, "wb") as pf:
         pkl.dump(save_dic, pf)
