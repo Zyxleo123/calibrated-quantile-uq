@@ -150,7 +150,6 @@ def compare_ece_sharpness(data: Dict[str, Any], outpath: Optional[str]=None, sho
 
     x = np.arange(len(labels))
     width = 0.35
-
     fig, axs = plt.subplots(1, 2, figsize=(12,5))
     ax = axs[0]
     bars_ece = ax.bar(x, [v if v is not None else np.nan for v in ece_vals], color='C0')
@@ -181,7 +180,7 @@ def compare_scoring_rules(data: Dict[str, Any], outpath: Optional[str]=None, sho
     Compare bag_nll, crps, mpiw, interval, check on test set.
     Uses keys with and without _best and recal_ prefixes: e.g., te_bag_nll, te_bag_nll_best, recal_te_bag_nll, recal_te_bag_nll_best.
     """
-    metrics = ["bag_nll", "crps", "mpiw", "interval", "check"]
+    metrics = ["bag_nll", "crps", "mpiw", "interval", "check", "cali_score"]
     labels = ["Original", "Best", "Recal Original", "Recal Best"]
 
     n = len(metrics)

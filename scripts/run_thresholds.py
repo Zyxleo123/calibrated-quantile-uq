@@ -13,8 +13,10 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Run main.py across datasets and thresholds and generate plots.")
     parser.add_argument("--num_thresholds", "-n", type=int, default=10,
                         help="Number of thresholds to run (uniformly between 0 (excluded) and 0.01). Default 10.")
-    parser.add_argument("--max_threshold", "-m", type=float, default=0.1,
-                        help="Maximum threshold value (default: 0.1).")
+    parser.add_argument("--min_threshold", type=float, default=0.0,
+                        help="Minimum threshold value (default: 0.0).")
+    parser.add_argument("--max_threshold", "-m", type=float, default=0.2,
+                        help="Maximum threshold value (default: 0.2).")
     parser.add_argument("--datasets", "-d", type=str, default="",
                         help="Comma-separated list of datasets to run. If omitted, runs all UCI datasets.")
     parser.add_argument("--save_dir", type=str, default="results",
@@ -26,9 +28,8 @@ def parse_args():
     args, unknown = parser.parse_known_args()
     return args, unknown
 
-def make_thresholds(n: int, max_thres: float) -> List[float]:
-    # e.g. (0.1/n, 2*0.1/n, ..., 0.1)
-    return [((i + 1) * max_thres / n) for i in range(n)]
+def make_thresholds(n: int, min_thres: float, max_thres: float) -> List[float]:
+    return [((i + 1) * (max_thres - min_thres) / n + min_thres) for i in range(n)]
 
 def find_new_pickles(before_set, results_dir):
     all_now = set(glob.glob(os.path.join(results_dir, "*.pkl")))
@@ -73,12 +74,12 @@ def main():
     else:
         datasets = ["boston", "concrete", "energy", "kin8nm", "naval", "power", "protein", "wine", "yacht"]
 
-    thresholds = make_thresholds(args.num_thresholds, args.max_threshold)
+    thresholds = make_thresholds(args.num_thresholds, args.min_threshold, args.max_threshold)
     results_dir = args.save_dir
     os.makedirs(results_dir, exist_ok=True)
 
-    for dataset in datasets:
-        for thr in thresholds:
+    for thr in reversed(thresholds):
+        for dataset in datasets:
             # snapshot existing pickles
             before = set(glob.glob(os.path.join(results_dir, "*.pkl")))
             try:

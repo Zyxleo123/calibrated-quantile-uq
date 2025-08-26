@@ -601,7 +601,9 @@ if __name__ == "__main__":
             args=Namespace(
                 exp_props=recal_exp_props,
                 device=torch.device("cpu"),
-                metric="cal_q"
+                metric="cal_q",
+                recal_model=recal_model,
+                recal_type="sklearn"
             )
         )
 
@@ -635,7 +637,9 @@ if __name__ == "__main__":
             args=Namespace(
                 exp_props=recal_exp_props,
                 device=torch.device("cpu"),
-                metric="cal_q"
+                metric="cal_q",
+                recal_model=recal_model,
+                recal_type="sklearn"
             )
         )
 
@@ -750,7 +754,9 @@ if __name__ == "__main__":
                 args=Namespace(
                     exp_props=recal_exp_props_best,
                     device=torch.device("cpu"),
-                    metric="cal_q"
+                    metric="cal_q",
+                    recal_model=recal_model_best,
+                    recal_type="sklearn"
                 )
             )
 
@@ -784,7 +790,9 @@ if __name__ == "__main__":
                 args=Namespace(
                     exp_props=recal_exp_props_best,
                     device=torch.device("cpu"),
-                    metric="cal_q"
+                    metric="cal_q",
+                    recal_model=recal_model_best,
+                    recal_type="sklearn"
                 )
             )
 
