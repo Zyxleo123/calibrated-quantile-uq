@@ -26,7 +26,8 @@ from losses import (
     interval_loss,
     batch_interval_loss,
 )
-from quantile_models import average_calibration
+from quantile_models import average_calibration, bag_nll, crps_score, mpiw, interval_score
+
 
 def get_loss_fn(loss_name):
     if loss_name == "qr":
@@ -204,6 +205,13 @@ if __name__ == "__main__":
     per_seed_int_cali = []
     per_seed_model = []
 
+    # New per-epoch validation lists for bag nll and crps
+    va_bag_nll_list = []
+    va_crps_list = []
+    # New per-epoch validation lists for mpiw and interval score
+    va_mpiw_list = []
+    va_interval_list = []
+
     print(
         "Drawing group batches every {}, penalty {}".format(
             args.draw_group_every, args.sharp_penalty
@@ -242,9 +250,9 @@ if __name__ == "__main__":
                 args.boot,
                 args.seed,
             )
-    if os.path.exists(save_file_name):
-        print("skipping {}".format(save_file_name))
-        sys.exit()
+    # if os.path.exists(save_file_name):
+        # print("skipping {}".format(save_file_name))
+        # sys.exit()
 
     # Set seeds
     set_seeds(args.seed)
@@ -444,7 +452,35 @@ if __name__ == "__main__":
                 metric="cal_q"
             )
         )
+        # Compute per-epoch validation bag_nll and crps (non-orig)
+        args_for_score = Namespace(device=torch.device("cpu"))
+        try:
+            va_bag = float(bag_nll(model_ens, x_va.cpu(), y_va.cpu(), args_for_score))
+        except Exception as e:
+            raise ValueError(f"Bag NLL computation failed in EP {ep}: {e}")
+        try:
+            va_crps = float(crps_score(model_ens, x_va.cpu(), y_va.cpu(), args_for_score))
+        except Exception as e:
+            raise ValueError(f"CRPS computation failed in EP {ep}: {e}")
+        # compute mpiw and interval score for validation (per-epoch)
+        try:
+            va_mpiw_val = mpiw(model_ens, x_va.cpu(), y_va.cpu(), args_for_score)
+            # mpiw returns tensor per-alpha; take mean or first element depending on usage — take mean
+            va_mpiw = float(torch.mean(va_mpiw_val).item()) if isinstance(va_mpiw_val, torch.Tensor) else float(va_mpiw_val)
+        except Exception as e:
+            raise ValueError(f"MPIW computation failed in EP {ep}: {e}")
+        try:
+            va_int_val = float(interval_score(model_ens, x_va.cpu(), y_va.cpu(), args_for_score))
+            va_interval = va_int_val
+        except Exception as e:
+            raise ValueError(f"Interval score computation failed in EP {ep}: {e}")
+        va_bag_nll_list.append(va_bag)
+        va_crps_list.append(va_crps)
+        va_mpiw_list.append(va_mpiw)
+        va_interval_list.append(va_interval)
+        # move back to GPU if available for training continuation
         model_ens.use_device(torch.device("cuda"))
+
         va_sharp_list.append(sharp_score)
         va_ece_list.append(ece)
         if ece < args.ece_thres:
@@ -515,6 +551,14 @@ if __name__ == "__main__":
     reduced_va_q_preds = va_q_preds[
         :, get_q_idx(va_exp_props, 0.01) : get_q_idx(va_exp_props, 0.99) + 1
     ]
+    # Final model: compute bag_nll and crps on validation
+    args_for_score = Namespace(device=torch.device("cpu"))
+    va_bag_nll = float(bag_nll(model_ens, x_va, y_va, args_for_score))
+    va_crps = float(crps_score(model_ens, x_va, y_va, args_for_score))
+    # Final model: compute mpiw and interval on validation
+    va_mpiw_val = mpiw(model_ens, x_va, y_va, args_for_score)
+    va_mpiw = float(torch.mean(va_mpiw_val).item()) if isinstance(va_mpiw_val, torch.Tensor) else float(va_mpiw_val)
+    va_interval = float(interval_score(model_ens, x_va, y_va, args_for_score))
 
     # Test UQ on test
     print("Testing UQ on test")
@@ -536,6 +580,13 @@ if __name__ == "__main__":
         recal_type=None,
         test_group_cal=True,
     )
+    # Final model: compute bag_nll and crps on test
+    te_bag_nll = float(bag_nll(model_ens, x_te, y_te, Namespace(device=torch.device("cpu"))))
+    te_crps = float(crps_score(model_ens, x_te, y_te, Namespace(device=torch.device("cpu"))))
+    # Final model: compute mpiw and interval on test
+    te_mpiw_val = mpiw(model_ens, x_te, y_te, Namespace(device=torch.device("cpu")))
+    te_mpiw = float(torch.mean(te_mpiw_val).item()) if isinstance(te_mpiw_val, torch.Tensor) else float(te_mpiw_val)
+    te_interval = float(interval_score(model_ens, x_te, y_te, Namespace(device=torch.device("cpu"))))
 
     # print('val', va_cali_score, va_sharp_score)
     print("\n")
@@ -571,6 +622,13 @@ if __name__ == "__main__":
             recal_type="sklearn",
             test_group_cal=True,
         )
+        # compute recalibrated metrics for final model (using quantile_models functions with recal_model via args)
+        args_recal = Namespace(device=torch.device("cpu"), recal_model=recal_model, recal_type="sklearn")
+        recal_va_bag_nll = float(bag_nll(model_ens, x_va, y_va, args_recal))
+        recal_va_crps = float(crps_score(model_ens, x_va, y_va, args_recal))
+        recal_va_mpiw_val = mpiw(model_ens, x_va, y_va, args_recal)
+        recal_va_mpiw = float(torch.mean(recal_va_mpiw_val).item()) if isinstance(recal_va_mpiw_val, torch.Tensor) else float(recal_va_mpiw_val)
+        recal_va_interval = float(interval_score(model_ens, x_va, y_va, args_recal))
 
         (
             recal_te_cali_score,
@@ -589,6 +647,11 @@ if __name__ == "__main__":
             recal_type="sklearn",
             test_group_cal=True,
         )
+        recal_te_bag_nll = float(bag_nll(model_ens, x_te, y_te, args_recal))
+        recal_te_crps = float(crps_score(model_ens, x_te, y_te, args_recal))
+        recal_te_mpiw_val = mpiw(model_ens, x_te, y_te, args_recal)
+        recal_te_mpiw = float(torch.mean(recal_te_mpiw_val).item()) if isinstance(recal_te_mpiw_val, torch.Tensor) else float(recal_te_mpiw_val)
+        recal_te_interval = float(interval_score(model_ens, x_te, y_te, args_recal))
 
     # Only perform the extra validation/test and recalibration for the best model
     # if a best model passing the ECE threshold was found during training.
@@ -608,6 +671,13 @@ if __name__ == "__main__":
         reduced_va_q_preds_best = va_q_preds_best[
             :, get_q_idx(va_exp_props_best, 0.01) : get_q_idx(va_exp_props_best, 0.99) + 1
         ]
+
+        # Best model: compute bag_nll and crps on validation
+        va_bag_nll_best = float(bag_nll(best_model_ens, x_va, y_va, Namespace(device=torch.device("cpu"))))
+        va_crps_best = float(crps_score(best_model_ens, x_va, y_va, Namespace(device=torch.device("cpu"))))
+        va_mpiw_best_val = mpiw(best_model_ens, x_va, y_va, Namespace(device=torch.device("cpu")))
+        va_mpiw_best = float(torch.mean(va_mpiw_best_val).item()) if isinstance(va_mpiw_best_val, torch.Tensor) else float(va_mpiw_best_val)
+        va_interval_best = float(interval_score(best_model_ens, x_va, y_va, Namespace(device=torch.device("cpu"))))
 
         # Test UQ on test with best model
         print("Testing UQ on test with best model")
@@ -629,6 +699,13 @@ if __name__ == "__main__":
             recal_type=None,
             test_group_cal=True,
         )
+
+        # Best model: compute bag_nll and crps on test
+        te_bag_nll_best = float(bag_nll(best_model_ens, x_te, y_te, Namespace(device=torch.device("cpu"))))
+        te_crps_best = float(crps_score(best_model_ens, x_te, y_te, Namespace(device=torch.device("cpu"))))
+        te_mpiw_best_val = mpiw(best_model_ens, x_te, y_te, Namespace(device=torch.device("cpu")))
+        te_mpiw_best = float(torch.mean(te_mpiw_best_val).item()) if isinstance(te_mpiw_best_val, torch.Tensor) else float(te_mpiw_best_val)
+        te_interval_best = float(interval_score(best_model_ens, x_te, y_te, Namespace(device=torch.device("cpu"))))
 
         # Same recalibration procedure for best model
         if args.recal:
@@ -652,6 +729,13 @@ if __name__ == "__main__":
                 recal_type="sklearn",
                 test_group_cal=True,
             )
+            # compute recalibrated metrics for best model
+            args_recal_best = Namespace(device=torch.device("cpu"), recal_model=recal_model, recal_type="sklearn")
+            recal_va_bag_nll_best = float(bag_nll(best_model_ens, x_va, y_va, args_recal_best))
+            recal_va_crps_best = float(crps_score(best_model_ens, x_va, y_va, args_recal_best))
+            recal_va_mpiw_best_val = mpiw(best_model_ens, x_va, y_va, args_recal_best)
+            recal_va_mpiw_best = float(torch.mean(recal_va_mpiw_best_val).item()) if isinstance(recal_va_mpiw_best_val, torch.Tensor) else float(recal_va_mpiw_best_val)
+            recal_va_interval_best = float(interval_score(best_model_ens, x_va, y_va, args_recal_best))
 
             (
                 recal_te_cali_score_best,
@@ -670,6 +754,11 @@ if __name__ == "__main__":
                 recal_type="sklearn",
                 test_group_cal=True,
             )
+            recal_te_bag_nll_best = float(bag_nll(best_model_ens, x_te, y_te, args_recal_best))
+            recal_te_crps_best = float(crps_score(best_model_ens, x_te, y_te, args_recal_best))
+            recal_te_mpiw_best_val = mpiw(best_model_ens, x_te, y_te, args_recal_best)
+            recal_te_mpiw_best = float(torch.mean(recal_te_mpiw_best_val).item()) if isinstance(recal_te_mpiw_best_val, torch.Tensor) else float(recal_te_mpiw_best_val)
+            recal_te_interval_best = float(interval_score(best_model_ens, x_te, y_te, args_recal_best))
 
     # Build save_dic conditionally: only include the new diagnostics and best-model fields
     # when a best model was found. If none passed ECE threshold, do not add new keys.
@@ -679,17 +768,56 @@ if __name__ == "__main__":
             "tr_loss_list": tr_loss_list,  # loss lists
             "va_loss_list": va_loss_list,
             "te_loss_list": te_loss_list,
-
+            # grouped training statistics (per-epoch)
+            "train_metrics": {
+                "va_sharp_list": va_sharp_list,
+                "va_ece_list": va_ece_list,
+                "va_bag_nll_list": va_bag_nll_list,
+                "va_crps_list": va_crps_list,
+                "va_mpiw_list": va_mpiw_list,
+                "va_interval_list": va_interval_list,
+            },
+            # also duplicate train_metrics items at top-level
+            "va_sharp_list": va_sharp_list,
+            "va_ece_list": va_ece_list,
+            "va_bag_nll_list": va_bag_nll_list,
+            "va_crps_list": va_crps_list,
+            "va_mpiw_list": va_mpiw_list,
+            "va_interval_list": va_interval_list,
+            # grouped final model testing statistics
+            "test_metrics": {
+                "va": {"cali": va_cali_score, "sharp": va_sharp_score, "bag_nll": va_bag_nll, "crps": va_crps, "mpiw": va_mpiw, "interval": va_interval},
+                "te": {"cali": te_cali_score, "sharp": te_sharp_score, "bag_nll": te_bag_nll, "crps": te_crps, "mpiw": te_mpiw, "interval": te_interval},
+            },
+            # duplicate test_metrics items at top-level (many already present but ensure completeness)
+            "va_bag_nll": va_bag_nll,
+            "va_crps": va_crps,
+            "va_mpiw": va_mpiw,
+            "va_interval": va_interval,
+            "te_bag_nll": te_bag_nll,
+            "te_crps": te_crps,
+            "te_mpiw": te_mpiw,
+            "te_interval": te_interval,
             "va_cali_score": va_cali_score,  # test on va
             "va_sharp_score": va_sharp_score,
             "va_exp_props": va_exp_props,
             "va_obs_props": va_obs_props,
             "va_q_preds": va_q_preds,
+            # final model validation bag_nll/crps
+            "va_bag_nll": va_bag_nll,
+            "va_crps": va_crps,
+            "va_mpiw": va_mpiw,
+            "va_interval": va_interval,
             "te_cali_score": te_cali_score,  # test on te
             "te_sharp_score": te_sharp_score,
             "te_exp_props": te_exp_props,
             "te_obs_props": te_obs_props,
             "te_q_preds": te_q_preds,
+            # final model test bag_nll/crps
+            "te_bag_nll": te_bag_nll,
+            "te_crps": te_crps,
+            "te_mpiw": te_mpiw,
+            "te_interval": te_interval,
             "te_g_cali_scores": te_g_cali_scores,
             "te_scoring_rules": te_scoring_rules,
 
@@ -708,6 +836,15 @@ if __name__ == "__main__":
             "recal_te_q_preds": recal_te_q_preds,
             "recal_te_g_cali_scores": recal_te_g_cali_scores,
             "recal_te_scoring_rules": recal_te_scoring_rules,
+            # duplicate recalibrated metrics (final model) at top-level if computed
+            "recal_va_bag_nll": recal_va_bag_nll if 'recal_va_bag_nll' in globals() else None,
+            "recal_va_crps": recal_va_crps if 'recal_va_crps' in globals() else None,
+            "recal_va_mpiw": recal_va_mpiw if 'recal_va_mpiw' in globals() else None,
+            "recal_va_interval": recal_va_interval if 'recal_va_interval' in globals() else None,
+            "recal_te_bag_nll": recal_te_bag_nll if 'recal_te_bag_nll' in globals() else None,
+            "recal_te_crps": recal_te_crps if 'recal_te_crps' in globals() else None,
+            "recal_te_mpiw": recal_te_mpiw if 'recal_te_mpiw' in globals() else None,
+            "recal_te_interval": recal_te_interval if 'recal_te_interval' in globals() else None,
 
             # best-model (may be fallback) test results
             "va_cali_score_best": va_cali_score_best,
@@ -715,14 +852,28 @@ if __name__ == "__main__":
             "va_exp_props_best": va_exp_props_best,
             "va_obs_props_best": va_obs_props_best,
             "va_q_preds_best": va_q_preds_best,
+            # best model validation bag_nll/crps
+            "va_bag_nll_best": va_bag_nll_best,
+            "va_crps_best": va_crps_best,
+            "va_mpiw_best": va_mpiw_best,
+            "va_interval_best": va_interval_best,
             "te_cali_score_best": te_cali_score_best,
             "te_sharp_score_best": te_sharp_score_best,
             "te_exp_props_best": te_exp_props_best,
             "te_obs_props_best": te_obs_props_best,
             "te_q_preds_best": te_q_preds_best,
+            # best model test bag_nll/crps
+            "te_bag_nll_best": te_bag_nll_best,
+            "te_crps_best": te_crps_best,
+            "te_mpiw_best": te_mpiw_best,
+            "te_interval_best": te_interval_best,
             "te_g_cali_scores_best": te_g_cali_scores_best,
             "te_scoring_rules_best": te_scoring_rules_best,
-
+            # grouped best-model testing statistics
+            "best_model_metrics": {
+                "va": {"cali": va_cali_score_best, "sharp": va_sharp_score_best, "bag_nll": va_bag_nll_best, "crps": va_crps_best, "mpiw": va_mpiw_best, "interval": va_interval_best},
+                "te": {"cali": te_cali_score_best, "sharp": te_sharp_score_best, "bag_nll": te_bag_nll_best, "crps": te_crps_best, "mpiw": te_mpiw_best, "interval": te_interval_best},
+            },
             "recal_va_cali_score_best": recal_va_cali_score_best,
             "recal_va_sharp_score_best": recal_va_sharp_score_best,
             "recal_va_obs_props_best": recal_va_obs_props_best,
@@ -735,15 +886,25 @@ if __name__ == "__main__":
             "recal_te_q_preds_best": recal_te_q_preds_best,
             "recal_te_g_cali_scores_best": recal_te_g_cali_scores_best,
             "recal_te_scoring_rules_best": recal_te_scoring_rules_best,
-
-            # new diagnostics: per-epoch validation sharpness and ECE history, and best sharp score found
-            "va_sharp_list": va_sharp_list,
-            "va_ece_list": va_ece_list,
-            "best_sharp_score": best_sharp_score,
-            "best_model": best_model_ens,
-
-            "args": args,
-            "model": model_ens,
+            # duplicate recalibrated metrics (best model) at top-level if computed
+            "recal_va_bag_nll_best": recal_va_bag_nll_best if 'recal_va_bag_nll_best' in globals() else None,
+            "recal_va_crps_best": recal_va_crps_best if 'recal_va_crps_best' in globals() else None,
+            "recal_va_mpiw_best": recal_va_mpiw_best if 'recal_va_mpiw_best' in globals() else None,
+            "recal_va_interval_best": recal_va_interval_best if 'recal_va_interval_best' in globals() else None,
+            "recal_te_bag_nll_best": recal_te_bag_nll_best if 'recal_te_bag_nll_best' in globals() else None,
+            "recal_te_crps_best": recal_te_crps_best if 'recal_te_crps_best' in globals() else None,
+            "recal_te_mpiw_best": recal_te_mpiw_best if 'recal_te_mpiw_best' in globals() else None,
+            "recal_te_interval_best": recal_te_interval_best if 'recal_te_interval_best' in globals() else None,
+            # recalibrated final-model metrics
+            "recal_final_metrics": {
+                "va": {"cali": recal_va_cali_score, "bag_nll": recal_va_bag_nll, "crps": recal_va_crps, "mpiw": recal_va_mpiw, "interval": recal_va_interval},
+                "te": {"cali": recal_te_cali_score, "bag_nll": recal_te_bag_nll, "crps": recal_te_crps, "mpiw": recal_te_mpiw, "interval": recal_te_interval},
+            },
+            # recalibrated best-model metrics
+            "recal_best_metrics": {
+                "va": {"cali": recal_va_cali_score_best, "bag_nll": recal_va_bag_nll_best, "crps": recal_va_crps_best, "mpiw": recal_va_mpiw_best, "interval": recal_va_interval_best},
+                "te": {"cali": recal_te_cali_score_best, "bag_nll": recal_te_bag_nll_best, "crps": recal_te_crps_best, "mpiw": recal_te_mpiw_best, "interval": recal_te_interval_best},
+            },
         }
     else:
         # No model passed the ECE threshold: keep original keys only (no extra/best-model keys).
@@ -751,36 +912,61 @@ if __name__ == "__main__":
             "tr_loss_list": tr_loss_list,  # loss lists
             "va_loss_list": va_loss_list,
             "te_loss_list": te_loss_list,
-
+            # grouped training statistics (per-epoch)
+            "train_metrics": {
+                "va_sharp_list": va_sharp_list,
+                "va_ece_list": va_ece_list,
+                "va_bag_nll_list": va_bag_nll_list,
+                "va_crps_list": va_crps_list,
+                "va_mpiw_list": va_mpiw_list,
+                "va_interval_list": va_interval_list,
+            },
+            # duplicate train_metrics items at top-level (preserve previous else-behavior)
+            "va_sharp_list": va_sharp_list,
+            "va_ece_list": va_ece_list,
+            "va_bag_nll_list": va_bag_nll_list,
+            "va_crps_list": va_crps_list,
+            "va_mpiw_list": va_mpiw_list,
+            "va_interval_list": va_interval_list,
+            # grouped final model testing statistics
+            "test_metrics": {
+                "va": {"cali": va_cali_score, "sharp": va_sharp_score, "bag_nll": va_bag_nll, "crps": va_crps, "mpiw": va_mpiw, "interval": va_interval},
+                "te": {"cali": te_cali_score, "sharp": te_sharp_score, "bag_nll": te_bag_nll, "crps": te_crps, "mpiw": te_mpiw, "interval": te_interval},
+            },
+            # duplicate test_metrics items at top-level
+            "va_bag_nll": va_bag_nll,
+            "va_crps": va_crps,
+            "va_mpiw": va_mpiw,
+            "va_interval": va_interval,
+            "te_bag_nll": te_bag_nll,
+            "te_crps": te_crps,
+            "te_mpiw": te_mpiw,
+            "te_interval": te_interval,
             "va_cali_score": va_cali_score,  # test on va
             "va_sharp_score": va_sharp_score,
             "va_exp_props": va_exp_props,
             "va_obs_props": va_obs_props,
             "va_q_preds": va_q_preds,
+            # final model validation bag_nll/crps
+            "va_bag_nll": va_bag_nll,
+            "va_crps": va_crps,
+            "va_mpiw": va_mpiw,
+            "va_interval": va_interval,
             "te_cali_score": te_cali_score,  # test on te
             "te_sharp_score": te_sharp_score,
             "te_exp_props": te_exp_props,
             "te_obs_props": te_obs_props,
             "te_q_preds": te_q_preds,
+            # final model test bag_nll/crps
+            "te_bag_nll": te_bag_nll,
+            "te_crps": te_crps,
+            "te_mpiw": te_mpiw,
+            "te_interval": te_interval,
             "te_g_cali_scores": te_g_cali_scores,
             "te_scoring_rules": te_scoring_rules,
-
-            # recalibration model (may be None if not computed)
-            "recal_model": recal_model,
-            "recal_exp_props": recal_exp_props,
-            "recal_va_cali_score": recal_va_cali_score,
-            "recal_va_sharp_score": recal_va_sharp_score,
-            "recal_va_obs_props": recal_va_obs_props,
-            "recal_va_q_preds": recal_va_q_preds,
-            "recal_va_g_cali_scores": recal_va_g_cali_scores,
-            "recal_va_scoring_rules": recal_va_scoring_rules,
-            "recal_te_cali_score": recal_te_cali_score,
-            "recal_te_sharp_score": recal_te_sharp_score,
-            "recal_te_obs_props": recal_te_obs_props,
-            "recal_te_q_preds": recal_te_q_preds,
-            "recal_te_g_cali_scores": recal_te_g_cali_scores,
-            "recal_te_scoring_rules": recal_te_scoring_rules,
-
+            # per-epoch validation bag_nll and crps history
+            "va_bag_nll_list": va_bag_nll_list,
+            "va_crps_list": va_crps_list,
             "args": args,
             "model": model_ens,
         }

@@ -203,8 +203,7 @@ def crps_score(model, X, y, args): # all done
             curr_crps = np.mean((np.square(p_list) * below_idx) + (np.square(1 - p_list) * above_idx))
         #####
         if not np.isfinite(curr_crps):
-            import pdb; pdb.set_trace()
-
+            raise ValueError("CRPS is not finite")
         scores_list.append(curr_crps)
 
     loss = np.mean(scores_list)
