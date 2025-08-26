@@ -220,18 +220,19 @@ if __name__ == "__main__":
 
     # Save file name
     if "penalty" not in args.loss:
-        save_file_name = "{}/{}_loss{}_ens{}_boot{}_seed{}.pkl".format(
+        save_file_name = "{}/{}_loss{}_ens{}_boot{}_seed{}_thres{}.pkl".format(
             args.save_dir,
             args.data,
             args.loss,
             args.num_ens,
             args.boot,
             args.seed,
+            args.ece_thres
         )
     else:
         # penalizing sharpness
         if args.sharp_all is not None and args.sharp_all:
-            save_file_name = "{}/{}_loss{}_pen{}_sharpall_ens{}_boot{}_seed{}.pkl".format(
+            save_file_name = "{}/{}_loss{}_pen{}_sharpall_ens{}_boot{}_seed{}_thres{}.pkl".format(
                 args.save_dir,
                 args.data,
                 args.loss,
@@ -239,9 +240,10 @@ if __name__ == "__main__":
                 args.num_ens,
                 args.boot,
                 args.seed,
+                args.ece_thres
             )
         elif args.sharp_all is not None and not args.sharp_all:
-            save_file_name = "{}/{}_loss{}_pen{}_wideonly_ens{}_boot{}_seed{}.pkl".format(
+            save_file_name = "{}/{}_loss{}_pen{}_wideonly_ens{}_boot{}_seed{}_thres{}.pkl".format(
                 args.save_dir,
                 args.data,
                 args.loss,
@@ -249,6 +251,7 @@ if __name__ == "__main__":
                 args.num_ens,
                 args.boot,
                 args.seed,
+                args.ece_thres
             )
     # if os.path.exists(save_file_name):
         # print("skipping {}".format(save_file_name))
@@ -503,39 +506,6 @@ if __name__ == "__main__":
     )
     model_ens.use_device(torch.device("cpu"))
 
-    # Initialize recalibration-related variables to None so save_dic can be constructed
-    # even when args.recal is False.
-    recal_model = None
-    recal_exp_props = None
-
-    recal_va_cali_score = None
-    recal_va_sharp_score = None
-    recal_va_obs_props = None
-    recal_va_q_preds = None
-    recal_va_g_cali_scores = None
-    recal_va_scoring_rules = None
-
-    recal_te_cali_score = None
-    recal_te_sharp_score = None
-    recal_te_obs_props = None
-    recal_te_q_preds = None
-    recal_te_g_cali_scores = None
-    recal_te_scoring_rules = None
-
-    recal_va_cali_score_best = None
-    recal_va_sharp_score_best = None
-    recal_va_obs_props_best = None
-    recal_va_q_preds_best = None
-    recal_va_g_cali_scores_best = None
-    recal_va_scoring_rules_best = None
-
-    recal_te_cali_score_best = None
-    recal_te_sharp_score_best = None
-    recal_te_obs_props_best = None
-    recal_te_q_preds_best = None
-    recal_te_g_cali_scores_best = None
-    recal_te_scoring_rules_best = None
-
     # Test UQ on val
     print("Testing UQ on val")
     va_exp_props = torch.linspace(-2.0, 3.0, 501)
@@ -760,216 +730,81 @@ if __name__ == "__main__":
             recal_te_mpiw_best = float(torch.mean(recal_te_mpiw_best_val).item()) if isinstance(recal_te_mpiw_best_val, torch.Tensor) else float(recal_te_mpiw_best_val)
             recal_te_interval_best = float(interval_score(best_model_ens, x_te, y_te, args_recal_best))
 
-    # Build save_dic conditionally: only include the new diagnostics and best-model fields
-    # when a best model was found. If none passed ECE threshold, do not add new keys.
-    if best_model_ens is not None:
-        # Add new stats (va_sharp_list, va_ece_list, best_sharp_score, best_model) to saved results.
-        save_dic = {
-            "tr_loss_list": tr_loss_list,  # loss lists
-            "va_loss_list": va_loss_list,
-            "te_loss_list": te_loss_list,
-            # grouped training statistics (per-epoch)
-            "train_metrics": {
-                "va_sharp_list": va_sharp_list,
-                "va_ece_list": va_ece_list,
-                "va_bag_nll_list": va_bag_nll_list,
-                "va_crps_list": va_crps_list,
-                "va_mpiw_list": va_mpiw_list,
-                "va_interval_list": va_interval_list,
-            },
-            # also duplicate train_metrics items at top-level
+    save_dic = {
+        # Loss lists from training
+        "tr_loss_list": tr_loss_list,
+        "va_loss_list": va_loss_list,
+        "te_loss_list": te_loss_list,
+        
+        # Per-epoch validation metrics during training (grouped and top-level for compatibility)
+        "train_metrics": {
             "va_sharp_list": va_sharp_list,
             "va_ece_list": va_ece_list,
             "va_bag_nll_list": va_bag_nll_list,
             "va_crps_list": va_crps_list,
             "va_mpiw_list": va_mpiw_list,
             "va_interval_list": va_interval_list,
-            # grouped final model testing statistics
-            "test_metrics": {
-                "va": {"cali": va_cali_score, "sharp": va_sharp_score, "bag_nll": va_bag_nll, "crps": va_crps, "mpiw": va_mpiw, "interval": va_interval},
-                "te": {"cali": te_cali_score, "sharp": te_sharp_score, "bag_nll": te_bag_nll, "crps": te_crps, "mpiw": te_mpiw, "interval": te_interval},
-            },
-            # duplicate test_metrics items at top-level (many already present but ensure completeness)
-            "va_bag_nll": va_bag_nll,
-            "va_crps": va_crps,
-            "va_mpiw": va_mpiw,
-            "va_interval": va_interval,
-            "te_bag_nll": te_bag_nll,
-            "te_crps": te_crps,
-            "te_mpiw": te_mpiw,
-            "te_interval": te_interval,
-            "va_cali_score": va_cali_score,  # test on va
-            "va_sharp_score": va_sharp_score,
-            "va_exp_props": va_exp_props,
-            "va_obs_props": va_obs_props,
-            "va_q_preds": va_q_preds,
-            # final model validation bag_nll/crps
-            "va_bag_nll": va_bag_nll,
-            "va_crps": va_crps,
-            "va_mpiw": va_mpiw,
-            "va_interval": va_interval,
-            "te_cali_score": te_cali_score,  # test on te
-            "te_sharp_score": te_sharp_score,
-            "te_exp_props": te_exp_props,
-            "te_obs_props": te_obs_props,
-            "te_q_preds": te_q_preds,
-            # final model test bag_nll/crps
-            "te_bag_nll": te_bag_nll,
-            "te_crps": te_crps,
-            "te_mpiw": te_mpiw,
-            "te_interval": te_interval,
-            "te_g_cali_scores": te_g_cali_scores,
-            "te_scoring_rules": te_scoring_rules,
+        },
+        "va_sharp_list": va_sharp_list,
+        "va_ece_list": va_ece_list,
+        "va_bag_nll_list": va_bag_nll_list,
+        "va_crps_list": va_crps_list,
+        "va_mpiw_list": va_mpiw_list,
+        "va_interval_list": va_interval_list,
 
-            # recalibration model (may be None if not computed)
-            "recal_model": recal_model,
-            "recal_exp_props": recal_exp_props,
-            "recal_va_cali_score": recal_va_cali_score,
-            "recal_va_sharp_score": recal_va_sharp_score,
-            "recal_va_obs_props": recal_va_obs_props,
-            "recal_va_q_preds": recal_va_q_preds,
-            "recal_va_g_cali_scores": recal_va_g_cali_scores,
-            "recal_va_scoring_rules": recal_va_scoring_rules,
-            "recal_te_cali_score": recal_te_cali_score,
-            "recal_te_sharp_score": recal_te_sharp_score,
-            "recal_te_obs_props": recal_te_obs_props,
-            "recal_te_q_preds": recal_te_q_preds,
-            "recal_te_g_cali_scores": recal_te_g_cali_scores,
-            "recal_te_scoring_rules": recal_te_scoring_rules,
-            # duplicate recalibrated metrics (final model) at top-level if computed
-            "recal_va_bag_nll": recal_va_bag_nll if 'recal_va_bag_nll' in globals() else None,
-            "recal_va_crps": recal_va_crps if 'recal_va_crps' in globals() else None,
-            "recal_va_mpiw": recal_va_mpiw if 'recal_va_mpiw' in globals() else None,
-            "recal_va_interval": recal_va_interval if 'recal_va_interval' in globals() else None,
-            "recal_te_bag_nll": recal_te_bag_nll if 'recal_te_bag_nll' in globals() else None,
-            "recal_te_crps": recal_te_crps if 'recal_te_crps' in globals() else None,
-            "recal_te_mpiw": recal_te_mpiw if 'recal_te_mpiw' in globals() else None,
-            "recal_te_interval": recal_te_interval if 'recal_te_interval' in globals() else None,
+        # Test metrics for the final model (grouped)
+        "test_metrics": {
+            "va": {"cali": va_cali_score, "sharp": va_sharp_score, "bag_nll": va_bag_nll, "crps": va_crps, "mpiw": va_mpiw, "interval": va_interval},
+            "te": {"cali": te_cali_score, "sharp": te_sharp_score, "bag_nll": te_bag_nll, "crps": te_crps, "mpiw": te_mpiw, "interval": te_interval},
+        },
 
-            # best-model (may be fallback) test results
-            "va_cali_score_best": va_cali_score_best,
-            "va_sharp_score_best": va_sharp_score_best,
-            "va_exp_props_best": va_exp_props_best,
-            "va_obs_props_best": va_obs_props_best,
-            "va_q_preds_best": va_q_preds_best,
-            # best model validation bag_nll/crps
-            "va_bag_nll_best": va_bag_nll_best,
-            "va_crps_best": va_crps_best,
-            "va_mpiw_best": va_mpiw_best,
-            "va_interval_best": va_interval_best,
-            "te_cali_score_best": te_cali_score_best,
-            "te_sharp_score_best": te_sharp_score_best,
-            "te_exp_props_best": te_exp_props_best,
-            "te_obs_props_best": te_obs_props_best,
-            "te_q_preds_best": te_q_preds_best,
-            # best model test bag_nll/crps
-            "te_bag_nll_best": te_bag_nll_best,
-            "te_crps_best": te_crps_best,
-            "te_mpiw_best": te_mpiw_best,
-            "te_interval_best": te_interval_best,
-            "te_g_cali_scores_best": te_g_cali_scores_best,
-            "te_scoring_rules_best": te_scoring_rules_best,
-            # grouped best-model testing statistics
-            "best_model_metrics": {
-                "va": {"cali": va_cali_score_best, "sharp": va_sharp_score_best, "bag_nll": va_bag_nll_best, "crps": va_crps_best, "mpiw": va_mpiw_best, "interval": va_interval_best},
-                "te": {"cali": te_cali_score_best, "sharp": te_sharp_score_best, "bag_nll": te_bag_nll_best, "crps": te_crps_best, "mpiw": te_mpiw_best, "interval": te_interval_best},
-            },
-            "recal_va_cali_score_best": recal_va_cali_score_best,
-            "recal_va_sharp_score_best": recal_va_sharp_score_best,
-            "recal_va_obs_props_best": recal_va_obs_props_best,
-            "recal_va_q_preds_best": recal_va_q_preds_best,
-            "recal_va_g_cali_scores_best": recal_va_g_cali_scores_best,
-            "recal_va_scoring_rules_best": recal_va_scoring_rules_best,
-            "recal_te_cali_score_best": recal_te_cali_score_best,
-            "recal_te_sharp_score_best": recal_te_sharp_score_best,
-            "recal_te_obs_props_best": recal_te_obs_props_best,
-            "recal_te_q_preds_best": recal_te_q_preds_best,
-            "recal_te_g_cali_scores_best": recal_te_g_cali_scores_best,
-            "recal_te_scoring_rules_best": recal_te_scoring_rules_best,
-            # duplicate recalibrated metrics (best model) at top-level if computed
-            "recal_va_bag_nll_best": recal_va_bag_nll_best if 'recal_va_bag_nll_best' in globals() else None,
-            "recal_va_crps_best": recal_va_crps_best if 'recal_va_crps_best' in globals() else None,
-            "recal_va_mpiw_best": recal_va_mpiw_best if 'recal_va_mpiw_best' in globals() else None,
-            "recal_va_interval_best": recal_va_interval_best if 'recal_va_interval_best' in globals() else None,
-            "recal_te_bag_nll_best": recal_te_bag_nll_best if 'recal_te_bag_nll_best' in globals() else None,
-            "recal_te_crps_best": recal_te_crps_best if 'recal_te_crps_best' in globals() else None,
-            "recal_te_mpiw_best": recal_te_mpiw_best if 'recal_te_mpiw_best' in globals() else None,
-            "recal_te_interval_best": recal_te_interval_best if 'recal_te_interval_best' in globals() else None,
-            # recalibrated final-model metrics
+        # Detailed test results on validation and test sets for the final model
+        "va_cali_score": va_cali_score, "va_sharp_score": va_sharp_score, "va_exp_props": va_exp_props, "va_obs_props": va_obs_props, "va_q_preds": va_q_preds, "va_bag_nll": va_bag_nll, "va_crps": va_crps, "va_mpiw": va_mpiw, "va_interval": va_interval,
+        "te_cali_score": te_cali_score, "te_sharp_score": te_sharp_score, "te_exp_props": te_exp_props, "te_obs_props": te_obs_props, "te_q_preds": te_q_preds, "te_bag_nll": te_bag_nll, "te_crps": te_crps, "te_mpiw": te_mpiw, "te_interval": te_interval, "te_g_cali_scores": te_g_cali_scores, "te_scoring_rules": te_scoring_rules,
+        
+        # Configuration and final model object
+        "args": args,
+        "model": model_ens,
+    }
+
+    # Conditionally add recalibration results for the final model
+    if args.recal:
+        recal_final_updates = {
+            "recal_model": recal_model, "recal_exp_props": recal_exp_props,
+            "recal_va_cali_score": recal_va_cali_score, "recal_va_sharp_score": recal_va_sharp_score, "recal_va_obs_props": recal_va_obs_props, "recal_va_q_preds": recal_va_q_preds, "recal_va_g_cali_scores": recal_va_g_cali_scores, "recal_va_scoring_rules": recal_va_scoring_rules, "recal_va_bag_nll": recal_va_bag_nll, "recal_va_crps": recal_va_crps, "recal_va_mpiw": recal_va_mpiw, "recal_va_interval": recal_va_interval,
+            "recal_te_cali_score": recal_te_cali_score, "recal_te_sharp_score": recal_te_sharp_score, "recal_te_obs_props": recal_te_obs_props, "recal_te_q_preds": recal_te_q_preds, "recal_te_g_cali_scores": recal_te_g_cali_scores, "recal_te_scoring_rules": recal_te_scoring_rules, "recal_te_bag_nll": recal_te_bag_nll, "recal_te_crps": recal_te_crps, "recal_te_mpiw": recal_te_mpiw, "recal_te_interval": recal_te_interval,
             "recal_final_metrics": {
                 "va": {"cali": recal_va_cali_score, "bag_nll": recal_va_bag_nll, "crps": recal_va_crps, "mpiw": recal_va_mpiw, "interval": recal_va_interval},
                 "te": {"cali": recal_te_cali_score, "bag_nll": recal_te_bag_nll, "crps": recal_te_crps, "mpiw": recal_te_mpiw, "interval": recal_te_interval},
             },
-            # recalibrated best-model metrics
-            "recal_best_metrics": {
-                "va": {"cali": recal_va_cali_score_best, "bag_nll": recal_va_bag_nll_best, "crps": recal_va_crps_best, "mpiw": recal_va_mpiw_best, "interval": recal_va_interval_best},
-                "te": {"cali": recal_te_cali_score_best, "bag_nll": recal_te_bag_nll_best, "crps": recal_te_crps_best, "mpiw": recal_te_mpiw_best, "interval": recal_te_interval_best},
-            },
         }
-    else:
-        # No model passed the ECE threshold: keep original keys only (no extra/best-model keys).
-        save_dic = {
-            "tr_loss_list": tr_loss_list,  # loss lists
-            "va_loss_list": va_loss_list,
-            "te_loss_list": te_loss_list,
-            # grouped training statistics (per-epoch)
-            "train_metrics": {
-                "va_sharp_list": va_sharp_list,
-                "va_ece_list": va_ece_list,
-                "va_bag_nll_list": va_bag_nll_list,
-                "va_crps_list": va_crps_list,
-                "va_mpiw_list": va_mpiw_list,
-                "va_interval_list": va_interval_list,
+        save_dic.update(recal_final_updates)
+
+    # Conditionally add results for the best model found during training
+    if best_model_ens is not None:
+        best_model_updates = {
+            "best_model": best_model_ens,
+            "best_model_metrics": {
+                "va": {"cali": va_cali_score_best, "sharp": va_sharp_score_best, "bag_nll": va_bag_nll_best, "crps": va_crps_best, "mpiw": va_mpiw_best, "interval": va_interval_best},
+                "te": {"cali": te_cali_score_best, "sharp": te_sharp_score_best, "bag_nll": te_bag_nll_best, "crps": te_crps_best, "mpiw": te_mpiw_best, "interval": te_interval_best},
             },
-            # duplicate train_metrics items at top-level (preserve previous else-behavior)
-            "va_sharp_list": va_sharp_list,
-            "va_ece_list": va_ece_list,
-            "va_bag_nll_list": va_bag_nll_list,
-            "va_crps_list": va_crps_list,
-            "va_mpiw_list": va_mpiw_list,
-            "va_interval_list": va_interval_list,
-            # grouped final model testing statistics
-            "test_metrics": {
-                "va": {"cali": va_cali_score, "sharp": va_sharp_score, "bag_nll": va_bag_nll, "crps": va_crps, "mpiw": va_mpiw, "interval": va_interval},
-                "te": {"cali": te_cali_score, "sharp": te_sharp_score, "bag_nll": te_bag_nll, "crps": te_crps, "mpiw": te_mpiw, "interval": te_interval},
-            },
-            # duplicate test_metrics items at top-level
-            "va_bag_nll": va_bag_nll,
-            "va_crps": va_crps,
-            "va_mpiw": va_mpiw,
-            "va_interval": va_interval,
-            "te_bag_nll": te_bag_nll,
-            "te_crps": te_crps,
-            "te_mpiw": te_mpiw,
-            "te_interval": te_interval,
-            "va_cali_score": va_cali_score,  # test on va
-            "va_sharp_score": va_sharp_score,
-            "va_exp_props": va_exp_props,
-            "va_obs_props": va_obs_props,
-            "va_q_preds": va_q_preds,
-            # final model validation bag_nll/crps
-            "va_bag_nll": va_bag_nll,
-            "va_crps": va_crps,
-            "va_mpiw": va_mpiw,
-            "va_interval": va_interval,
-            "te_cali_score": te_cali_score,  # test on te
-            "te_sharp_score": te_sharp_score,
-            "te_exp_props": te_exp_props,
-            "te_obs_props": te_obs_props,
-            "te_q_preds": te_q_preds,
-            # final model test bag_nll/crps
-            "te_bag_nll": te_bag_nll,
-            "te_crps": te_crps,
-            "te_mpiw": te_mpiw,
-            "te_interval": te_interval,
-            "te_g_cali_scores": te_g_cali_scores,
-            "te_scoring_rules": te_scoring_rules,
-            # per-epoch validation bag_nll and crps history
-            "va_bag_nll_list": va_bag_nll_list,
-            "va_crps_list": va_crps_list,
-            "args": args,
-            "model": model_ens,
+            "va_cali_score_best": va_cali_score_best, "va_sharp_score_best": va_sharp_score_best, "va_exp_props_best": va_exp_props_best, "va_obs_props_best": va_obs_props_best, "va_q_preds_best": va_q_preds_best, "va_bag_nll_best": va_bag_nll_best, "va_crps_best": va_crps_best, "va_mpiw_best": va_mpiw_best, "va_interval_best": va_interval_best,
+            "te_cali_score_best": te_cali_score_best, "te_sharp_score_best": te_sharp_score_best, "te_exp_props_best": te_exp_props_best, "te_obs_props_best": te_obs_props_best, "te_q_preds_best": te_q_preds_best, "te_bag_nll_best": te_bag_nll_best, "te_crps_best": te_crps_best, "te_mpiw_best": te_mpiw_best, "te_interval_best": te_interval_best, "te_g_cali_scores_best": te_g_cali_scores_best, "te_scoring_rules_best": te_scoring_rules_best,
         }
+        
+        # Conditionally add recalibration results for the best model
+        if args.recal:
+            recal_best_updates = {
+                "recal_va_cali_score_best": recal_va_cali_score_best, "recal_va_sharp_score_best": recal_va_sharp_score_best, "recal_va_obs_props_best": recal_va_obs_props_best, "recal_va_q_preds_best": recal_va_q_preds_best, "recal_va_g_cali_scores_best": recal_va_g_cali_scores_best, "recal_va_scoring_rules_best": recal_va_scoring_rules_best, "recal_va_bag_nll_best": recal_va_bag_nll_best, "recal_va_crps_best": recal_va_crps_best, "recal_va_mpiw_best": recal_va_mpiw_best, "recal_va_interval_best": recal_va_interval_best,
+                "recal_te_cali_score_best": recal_te_cali_score_best, "recal_te_sharp_score_best": recal_te_sharp_score_best, "recal_te_obs_props_best": recal_te_obs_props_best, "recal_te_q_preds_best": recal_te_q_preds_best, "recal_te_g_cali_scores_best": recal_te_g_cali_scores_best, "recal_te_scoring_rules_best": recal_te_scoring_rules_best, "recal_te_bag_nll_best": recal_te_bag_nll_best, "recal_te_crps_best": recal_te_crps_best, "recal_te_mpiw_best": recal_te_mpiw_best, "recal_te_interval_best": recal_te_interval_best,
+                "recal_best_metrics": {
+                    "va": {"cali": recal_va_cali_score_best, "bag_nll": recal_va_bag_nll_best, "crps": recal_va_crps_best, "mpiw": recal_va_mpiw_best, "interval": recal_va_interval_best},
+                    "te": {"cali": recal_te_cali_score_best, "bag_nll": recal_te_bag_nll_best, "crps": recal_te_crps_best, "mpiw": recal_te_mpiw_best, "interval": recal_te_interval_best},
+                },
+            }
+            best_model_updates.update(recal_best_updates)
+        
+        save_dic.update(best_model_updates)
 
     with open(save_file_name, "wb") as pf:
         pkl.dump(save_dic, pf)
