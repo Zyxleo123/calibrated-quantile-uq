@@ -1,9 +1,8 @@
 import os
-import pickle
 from typing import Any, Dict, Optional
 import numpy as np
 import matplotlib.pyplot as plt
-from plot_utils import safe_get
+from .plot_utils import safe_get
 
 def _annotate_bars(ax, bars, fmt="{:.3f}", y_offset=0.0):
     """

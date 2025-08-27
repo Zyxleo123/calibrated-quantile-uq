@@ -13,9 +13,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Run main.py across datasets and thresholds and generate plots.")
     parser.add_argument("--num_thresholds", "-n", type=int, default=10,
                         help="Number of thresholds to run (uniformly between 0 (excluded) and 0.01). Default 10.")
-    parser.add_argument("--min_threshold", type=float, default=0.0,
+    parser.add_argument("--min_threshold", "-min", type=float, default=0.0,
                         help="Minimum threshold value (default: 0.0).")
-    parser.add_argument("--max_threshold", "-m", type=float, default=0.2,
+    parser.add_argument("--max_threshold", "-max", type=float, default=0.2,
                         help="Maximum threshold value (default: 0.2).")
     parser.add_argument("--datasets", "-d", type=str, default="",
                         help="Comma-separated list of datasets to run. If omitted, runs all UCI datasets.")
@@ -28,18 +28,16 @@ def parse_args():
     args, unknown = parser.parse_known_args()
     return args, unknown
 
-def make_thresholds(n: int, min_thres: float, max_thres: float) -> List[float]:
-    return [((i + 1) * (max_thres - min_thres) / n + min_thres) for i in range(n)]
-
 def find_new_pickles(before_set, results_dir):
     all_now = set(glob.glob(os.path.join(results_dir, "*.pkl")))
     return list(all_now - before_set)
 
-def run_main_for(dataset: str, thr: float, args, extra_args: List[str]):
+def run_main_for(dataset: str, min_thres: float, max_thres: float, args, extra_args: List[str]):
     cmd = [
         args.python_cmd,
         args.main_path,
-        "--ece_thres", f"{thr:.8f}",
+        "--min_thres", f"{min_thres:.8f}",
+        "--max_thres", f"{max_thres:.8f}",
         "--data", dataset,
         "--save_dir", args.save_dir
     ]
@@ -51,7 +49,8 @@ def run_main_for(dataset: str, thr: float, args, extra_args: List[str]):
 
 def generate_plots_for_pickle(pkl_path: str, out_parent_dir: str):
     # import plotting helpers (do local import so script can run even if plotting deps missing until needed)
-    from plots.plot_metrics import load_pickle, plot_training_stats, compare_ece_sharpness, compare_scoring_rules, calibration_plot
+    from plots.plot_metrics import plot_training_stats, compare_ece_sharpness, compare_scoring_rules, calibration_plot
+    from plots.plot_utils import load_pickle
 
     base = os.path.basename(pkl_path)
     name = base[:-4] if base.lower().endswith(".pkl") else base
@@ -74,32 +73,30 @@ def main():
     else:
         datasets = ["boston", "concrete", "energy", "kin8nm", "naval", "power", "protein", "wine", "yacht"]
 
-    thresholds = make_thresholds(args.num_thresholds, args.min_threshold, args.max_threshold)
     results_dir = args.save_dir
     os.makedirs(results_dir, exist_ok=True)
 
-    for thr in reversed(thresholds):
-        for dataset in datasets:
-            # snapshot existing pickles
-            before = set(glob.glob(os.path.join(results_dir, "*.pkl")))
+    for dataset in datasets:
+        # snapshot existing pickles
+        before = set(glob.glob(os.path.join(results_dir, "*.pkl")))
+        try:
+            run_main_for(dataset, args.min_threshold, args.max_threshold, args, extra_args)
+        except subprocess.CalledProcessError as e:
+            print(f"main.py failed for dataset={dataset}, min_thres={args.min_threshold}, max_thres={args.max_threshold}: {e}")
+            continue
+
+        # wait briefly to allow file system to settle
+        time.sleep(5.0)
+        new_pkls = find_new_pickles(before, results_dir)
+        if not new_pkls:
+            print(f"No new pickle detected for dataset={dataset}, min_thres={args.min_threshold}, max_thres={args.max_threshold}. Check main.py output.")
+            continue
+
+        for pkl in sorted(new_pkls):
             try:
-                run_main_for(dataset, thr, args, extra_args)
-            except subprocess.CalledProcessError as e:
-                print(f"main.py failed for dataset={dataset}, thr={thr}: {e}")
-                continue
-
-            # wait briefly to allow file system to settle
-            time.sleep(0.2)
-            new_pkls = find_new_pickles(before, results_dir)
-            if not new_pkls:
-                print(f"No new pickle detected for dataset={dataset}, thr={thr}. Check main.py output.")
-                continue
-
-            for pkl in sorted(new_pkls):
-                try:
-                    generate_plots_for_pickle(pkl, results_dir)
-                except Exception as e:
-                    print(f"Failed to generate plots for {pkl}: {e}")
+                generate_plots_for_pickle(pkl, results_dir)
+            except Exception as e:
+                print(f"Failed to generate plots for {pkl}: {e}")
 
     print("All runs and plotting complete.")
 
