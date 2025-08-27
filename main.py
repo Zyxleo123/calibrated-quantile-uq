@@ -654,111 +654,111 @@ if __name__ == "__main__":
                 recal_type="sklearn"
             )
         )
-    
+
     # New: Evaluation loop for all best models
     # Initialize lists to store metrics for each of the 10 best models
     all_metrics_best = []
-    for idx, best_model_ens in enumerate(best_models):
-        print(f"\n--- Evaluating best model for threshold {thresholds[idx]:.4f} ---")
+    for idx_tmp, best_model_ens in enumerate(best_models):
+        print(f"\n--- Evaluating best model for threshold {thresholds[idx_tmp]:.4f} ---")
         if best_model_ens is None:
             print("No model found for this threshold.")
             all_metrics_best.append(None)
             continue
         
-        current_metrics = {}
+        current_metrics_tmp = {}
         best_model_ens.use_device(torch.device("cpu"))
 
         # Test UQ on val with best model
         print("Testing UQ on val with best model")
-        va_exp_props_best = torch.linspace(-2.0, 3.0, 501)
-        va_cali_score, va_sharp_score, va_obs_props, va_q_preds, _, _ = test_uq(
-            best_model_ens, x_va, y_va, va_exp_props_best, y_range, recal_model=None, recal_type=None
+        va_exp_props_best_tmp = torch.linspace(-2.0, 3.0, 501)
+        va_cali_score_tmp, va_sharp_score_tmp, va_obs_props_tmp, va_q_preds_tmp, _, _ = test_uq(
+            best_model_ens, x_va, y_va, va_exp_props_best_tmp, y_range, recal_model=None, recal_type=None
         )
-        current_metrics['va_cali_score_best'] = va_cali_score
-        current_metrics['va_sharp_score_best'] = va_sharp_score
-        current_metrics['va_obs_props_best'] = va_obs_props
-        current_metrics['va_q_preds_best'] = va_q_preds
+        current_metrics_tmp['va_cali_score_best'] = va_cali_score_tmp
+        current_metrics_tmp['va_sharp_score_best'] = va_sharp_score_tmp
+        current_metrics_tmp['va_obs_props_best'] = va_obs_props_tmp
+        current_metrics_tmp['va_q_preds_best'] = va_q_preds_tmp
 
-        args_for_score = Namespace(device=torch.device("cpu"), q_list=torch.linspace(0.01, 0.99, 99))
-        current_metrics['va_bag_nll_best'] = float(bag_nll(best_model_ens, x_va, y_va, args_for_score))
-        current_metrics['va_crps_best'] = float(crps_score(best_model_ens, x_va, y_va, args_for_score))
-        va_mpiw_val = mpiw(best_model_ens, x_va, y_va, args_for_score)
-        current_metrics['va_mpiw_best'] = float(torch.mean(va_mpiw_val).item()) if isinstance(va_mpiw_val, torch.Tensor) else float(va_mpiw_val)
-        current_metrics['va_interval_best'] = float(interval_score(best_model_ens, x_va, y_va, args_for_score))
-        current_metrics['va_check_best'] = float(check_loss(best_model_ens, x_va, y_va, args_for_score))
-        current_metrics['va_ece_best'] = average_calibration(
-            best_model_ens, x_va, y_va, args=Namespace(exp_props=va_exp_props_best, device=torch.device("cpu"), metric="cal_q")
+        args_for_score_tmp = Namespace(device=torch.device("cpu"), q_list=torch.linspace(0.01, 0.99, 99))
+        current_metrics_tmp['va_bag_nll_best'] = float(bag_nll(best_model_ens, x_va, y_va, args_for_score_tmp))
+        current_metrics_tmp['va_crps_best'] = float(crps_score(best_model_ens, x_va, y_va, args_for_score_tmp))
+        va_mpiw_val_tmp = mpiw(best_model_ens, x_va, y_va, args_for_score_tmp)
+        current_metrics_tmp['va_mpiw_best'] = float(torch.mean(va_mpiw_val_tmp).item()) if isinstance(va_mpiw_val_tmp, torch.Tensor) else float(va_mpiw_val_tmp)
+        current_metrics_tmp['va_interval_best'] = float(interval_score(best_model_ens, x_va, y_va, args_for_score_tmp))
+        current_metrics_tmp['va_check_best'] = float(check_loss(best_model_ens, x_va, y_va, args_for_score_tmp))
+        current_metrics_tmp['va_ece_best'] = average_calibration(
+            best_model_ens, x_va, y_va, args=Namespace(exp_props=va_exp_props_best_tmp, device=torch.device("cpu"), metric="cal_q")
         )
 
         # Test UQ on test with best model
         print("Testing UQ on test with best model")
-        te_exp_props_best = torch.linspace(0.01, 0.99, 99)
-        te_cali_score, te_sharp_score, te_obs_props, te_q_preds, te_g_cali_scores, te_scoring_rules = test_uq(
-            best_model_ens, x_te, y_te, te_exp_props_best, y_range, recal_model=None, recal_type=None, test_group_cal=True
+        te_exp_props_best_tmp = torch.linspace(0.01, 0.99, 99)
+        te_cali_score_tmp, te_sharp_score_tmp, te_obs_props_tmp, te_q_preds_tmp, te_g_cali_scores_tmp, te_scoring_rules_tmp = test_uq(
+            best_model_ens, x_te, y_te, te_exp_props_best_tmp, y_range, recal_model=None, recal_type=None, test_group_cal=True
         )
-        current_metrics['te_cali_score_best'] = te_cali_score
-        current_metrics['te_sharp_score_best'] = te_sharp_score
-        current_metrics['te_obs_props_best'] = te_obs_props
-        current_metrics['te_q_preds_best'] = te_q_preds
-        current_metrics['te_g_cali_scores_best'] = te_g_cali_scores
-        current_metrics['te_scoring_rules_best'] = te_scoring_rules
+        current_metrics_tmp['te_cali_score_best'] = te_cali_score_tmp
+        current_metrics_tmp['te_sharp_score_best'] = te_sharp_score_tmp
+        current_metrics_tmp['te_obs_props_best'] = te_obs_props_tmp
+        current_metrics_tmp['te_q_preds_best'] = te_q_preds_tmp
+        current_metrics_tmp['te_g_cali_scores_best'] = te_g_cali_scores_tmp
+        current_metrics_tmp['te_scoring_rules_best'] = te_scoring_rules_tmp
 
-        current_metrics['te_bag_nll_best'] = float(bag_nll(best_model_ens, x_te, y_te, args_for_score))
-        current_metrics['te_crps_best'] = float(crps_score(best_model_ens, x_te, y_te, args_for_score))
-        te_mpiw_val = mpiw(best_model_ens, x_te, y_te, args_for_score)
-        current_metrics['te_mpiw_best'] = float(torch.mean(te_mpiw_val).item()) if isinstance(te_mpiw_val, torch.Tensor) else float(te_mpiw_val)
-        current_metrics['te_interval_best'] = float(interval_score(best_model_ens, x_te, y_te, args_for_score))
-        current_metrics['te_check_best'] = float(check_loss(best_model_ens, x_te, y_te, args_for_score))
-        current_metrics['te_ece_best'] = average_calibration(
-            best_model_ens, x_te, y_te, args=Namespace(exp_props=te_exp_props_best, device=torch.device("cpu"), metric="cal_q")
+        current_metrics_tmp['te_bag_nll_best'] = float(bag_nll(best_model_ens, x_te, y_te, args_for_score_tmp))
+        current_metrics_tmp['te_crps_best'] = float(crps_score(best_model_ens, x_te, y_te, args_for_score_tmp))
+        te_mpiw_val_tmp = mpiw(best_model_ens, x_te, y_te, args_for_score_tmp)
+        current_metrics_tmp['te_mpiw_best'] = float(torch.mean(te_mpiw_val_tmp).item()) if isinstance(te_mpiw_val_tmp, torch.Tensor) else float(te_mpiw_val_tmp)
+        current_metrics_tmp['te_interval_best'] = float(interval_score(best_model_ens, x_te, y_te, args_for_score_tmp))
+        current_metrics_tmp['te_check_best'] = float(check_loss(best_model_ens, x_te, y_te, args_for_score_tmp))
+        current_metrics_tmp['te_ece_best'] = average_calibration(
+            best_model_ens, x_te, y_te, args=Namespace(exp_props=te_exp_props_best_tmp, device=torch.device("cpu"), metric="cal_q")
         )
 
         # Recalibration for best model
         if args.recal:
-            recal_model_best = iso_recal(va_exp_props_best, va_obs_props)
-            current_metrics['recal_model_best'] = recal_model_best
-            recal_exp_props_best = torch.linspace(0.01, 0.99, 99)
+            recal_model_best_tmp = iso_recal(va_exp_props_best_tmp, va_obs_props_tmp)
+            current_metrics_tmp['recal_model_best'] = recal_model_best_tmp
+            recal_exp_props_best_tmp = torch.linspace(0.01, 0.99, 99)
             
             # Recal on Val
-            recal_va_cali, recal_va_sharp, recal_va_obs, recal_va_q_preds, recal_va_g_cali, recal_va_scoring = test_uq(
-                best_model_ens, x_va, y_va, recal_exp_props_best, y_range, recal_model=recal_model_best, recal_type="sklearn", test_group_cal=True
+            recal_va_cali_tmp, recal_va_sharp_tmp, recal_va_obs_tmp, recal_va_q_preds_tmp, recal_va_g_cali_tmp, recal_va_scoring_tmp = test_uq(
+                best_model_ens, x_va, y_va, recal_exp_props_best_tmp, y_range, recal_model=recal_model_best_tmp, recal_type="sklearn", test_group_cal=True
             )
-            current_metrics['recal_va_cali_score_best'] = recal_va_cali
-            current_metrics['recal_va_sharp_score_best'] = recal_va_sharp
-            current_metrics['recal_va_obs_props_best'] = recal_va_obs
-            current_metrics['recal_va_q_preds_best'] = recal_va_q_preds
-            current_metrics['recal_va_g_cali_scores_best'] = recal_va_g_cali
-            current_metrics['recal_va_scoring_rules_best'] = recal_va_scoring
+            current_metrics_tmp['recal_va_cali_score_best'] = recal_va_cali_tmp
+            current_metrics_tmp['recal_va_sharp_score_best'] = recal_va_sharp_tmp
+            current_metrics_tmp['recal_va_obs_props_best'] = recal_va_obs_tmp
+            current_metrics_tmp['recal_va_q_preds_best'] = recal_va_q_preds_tmp
+            current_metrics_tmp['recal_va_g_cali_scores_best'] = recal_va_g_cali_tmp
+            current_metrics_tmp['recal_va_scoring_rules_best'] = recal_va_scoring_tmp
 
-            args_recal_best = Namespace(device=torch.device("cpu"), recal_model=recal_model_best, recal_type="sklearn", q_list=torch.linspace(0.01,0.99,99))
-            current_metrics['recal_va_bag_nll_best'] = float(bag_nll(best_model_ens, x_va, y_va, args_recal_best))
-            current_metrics['recal_va_crps_best'] = float(crps_score(best_model_ens, x_va, y_va, args_recal_best))
-            recal_va_mpiw_val = mpiw(best_model_ens, x_va, y_va, args_recal_best)
-            current_metrics['recal_va_mpiw_best'] = float(torch.mean(recal_va_mpiw_val).item()) if isinstance(recal_va_mpiw_val, torch.Tensor) else float(recal_va_mpiw_val)
-            current_metrics['recal_va_interval_best'] = float(interval_score(best_model_ens, x_va, y_va, args_recal_best))
-            current_metrics['recal_va_check_best'] = float(check_loss(best_model_ens, x_va, y_va, args_recal_best))
-            current_metrics['recal_va_ece_best'] = average_calibration(best_model_ens, x_va, y_va, args=Namespace(exp_props=recal_exp_props_best, device=torch.device("cpu"), metric="cal_q", recal_model=recal_model_best, recal_type="sklearn"))
+            args_recal_best_tmp = Namespace(device=torch.device("cpu"), recal_model=recal_model_best_tmp, recal_type="sklearn", q_list=torch.linspace(0.01,0.99,99))
+            current_metrics_tmp['recal_va_bag_nll_best'] = float(bag_nll(best_model_ens, x_va, y_va, args_recal_best_tmp))
+            current_metrics_tmp['recal_va_crps_best'] = float(crps_score(best_model_ens, x_va, y_va, args_recal_best_tmp))
+            recal_va_mpiw_val_tmp = mpiw(best_model_ens, x_va, y_va, args_recal_best_tmp)
+            current_metrics_tmp['recal_va_mpiw_best'] = float(torch.mean(recal_va_mpiw_val_tmp).item()) if isinstance(recal_va_mpiw_val_tmp, torch.Tensor) else float(recal_va_mpiw_val_tmp)
+            current_metrics_tmp['recal_va_interval_best'] = float(interval_score(best_model_ens, x_va, y_va, args_recal_best_tmp))
+            current_metrics_tmp['recal_va_check_best'] = float(check_loss(best_model_ens, x_va, y_va, args_recal_best_tmp))
+            current_metrics_tmp['recal_va_ece_best'] = average_calibration(best_model_ens, x_va, y_va, args=Namespace(exp_props=recal_exp_props_best_tmp, device=torch.device("cpu"), metric="cal_q", recal_model=recal_model_best_tmp, recal_type="sklearn"))
 
             # Recal on Test
-            recal_te_cali, recal_te_sharp, recal_te_obs, recal_te_q_preds, recal_te_g_cali, recal_te_scoring = test_uq(
-                best_model_ens, x_te, y_te, recal_exp_props_best, y_range, recal_model=recal_model_best, recal_type="sklearn", test_group_cal=True
+            recal_te_cali_tmp, recal_te_sharp_tmp, recal_te_obs_tmp, recal_te_q_preds_tmp, recal_te_g_cali_tmp, recal_te_scoring_tmp = test_uq(
+                best_model_ens, x_te, y_te, recal_exp_props_best_tmp, y_range, recal_model=recal_model_best_tmp, recal_type="sklearn", test_group_cal=True
             )
-            current_metrics['recal_te_cali_score_best'] = recal_te_cali
-            current_metrics['recal_te_sharp_score_best'] = recal_te_sharp
-            current_metrics['recal_te_obs_props_best'] = recal_te_obs
-            current_metrics['recal_te_q_preds_best'] = recal_te_q_preds
-            current_metrics['recal_te_g_cali_scores_best'] = recal_te_g_cali
-            current_metrics['recal_te_scoring_rules_best'] = recal_te_scoring
+            current_metrics_tmp['recal_te_cali_score_best'] = recal_te_cali_tmp
+            current_metrics_tmp['recal_te_sharp_score_best'] = recal_te_sharp_tmp
+            current_metrics_tmp['recal_te_obs_props_best'] = recal_te_obs_tmp
+            current_metrics_tmp['recal_te_q_preds_best'] = recal_te_q_preds_tmp
+            current_metrics_tmp['recal_te_g_cali_scores_best'] = recal_te_g_cali_tmp
+            current_metrics_tmp['recal_te_scoring_rules_best'] = recal_te_scoring_tmp
 
-            current_metrics['recal_te_bag_nll_best'] = float(bag_nll(best_model_ens, x_te, y_te, args_recal_best))
-            current_metrics['recal_te_crps_best'] = float(crps_score(best_model_ens, x_te, y_te, args_recal_best))
-            recal_te_mpiw_val = mpiw(best_model_ens, x_te, y_te, args_recal_best)
-            current_metrics['recal_te_mpiw_best'] = float(torch.mean(recal_te_mpiw_val).item()) if isinstance(recal_te_mpiw_val, torch.Tensor) else float(recal_te_mpiw_val)
-            current_metrics['recal_te_interval_best'] = float(interval_score(best_model_ens, x_te, y_te, args_recal_best))
-            current_metrics['recal_te_check_best'] = float(check_loss(best_model_ens, x_te, y_te, args_recal_best))
-            current_metrics['recal_te_ece_best'] = average_calibration(best_model_ens, x_te, y_te, args=Namespace(exp_props=recal_exp_props_best, device=torch.device("cpu"), metric="cal_q", recal_model=recal_model_best, recal_type="sklearn"))
-            
-        all_metrics_best.append(current_metrics)
+            current_metrics_tmp['recal_te_bag_nll_best'] = float(bag_nll(best_model_ens, x_te, y_te, args_recal_best_tmp))
+            current_metrics_tmp['recal_te_crps_best'] = float(crps_score(best_model_ens, x_te, y_te, args_recal_best_tmp))
+            recal_te_mpiw_val_tmp = mpiw(best_model_ens, x_te, y_te, args_recal_best_tmp)
+            current_metrics_tmp['recal_te_mpiw_best'] = float(torch.mean(recal_te_mpiw_val_tmp).item()) if isinstance(recal_te_mpiw_val_tmp, torch.Tensor) else float(recal_te_mpiw_val_tmp)
+            current_metrics_tmp['recal_te_interval_best'] = float(interval_score(best_model_ens, x_te, y_te, args_recal_best_tmp))
+            current_metrics_tmp['recal_te_check_best'] = float(check_loss(best_model_ens, x_te, y_te, args_recal_best_tmp))
+            current_metrics_tmp['recal_te_ece_best'] = average_calibration(best_model_ens, x_te, y_te, args=Namespace(exp_props=recal_exp_props_best_tmp, device=torch.device("cpu"), metric="cal_q", recal_model=recal_model_best_tmp, recal_type="sklearn"))
+        all_metrics_best.append(current_metrics_tmp)
+
 
     # Unpack metrics from the list of dictionaries into lists of metrics
     def dictlist_to_listdict(metrics_list, key):

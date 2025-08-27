@@ -1,10 +1,11 @@
 import os
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from plots.plot_metrics import load_pickle, plot_training_stats, compare_ece_sharpness, compare_scoring_rules, calibration_plot
+from plots.plot_metrics import plot_training_stats, compare_ece_sharpness, compare_scoring_rules, calibration_plot
+from plot_utils import load_pickle
 
 def main():
-    pkl = "boston_lossscaled_batch_cal_ens1_bootFalse_seed0_thres0.1.pkl"
+    pkl = "boston_lossscaled_batch_cal_ens1_bootFalse_seed0_thres0.0-0.2.pkl"
     if not os.path.exists(pkl):
         print(f"Test pickle not found: {pkl}. Please place it in the current directory to run the demo.")
         return

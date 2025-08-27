@@ -1,17 +1,9 @@
 import os
 import pickle
-from typing import Any, Dict, Sequence, Tuple, Optional
+from typing import Any, Dict, Optional
 import numpy as np
 import matplotlib.pyplot as plt
-
-def load_pickle(path: str) -> Dict[str, Any]:
-    """Load a pickle that contains the save_var_names dict data."""
-    with open(path, "rb") as f:
-        data = pickle.load(f)
-    return data
-
-def _safe_get(d: Dict[str, Any], key: str, default=None):
-    return d.get(key, default)
+from plot_utils import safe_get
 
 def _annotate_bars(ax, bars, fmt="{:.3f}", y_offset=0.0):
     """
@@ -39,15 +31,15 @@ def plot_training_stats(data: Dict[str, Any], outpath: Optional[str]=None, show:
     va_bag_nll_list, va_crps_list, va_mpiw_list, va_interval_list, va_check_list).
     Separate outputs: one figure for loss/ece/sharpness, another for other scores (each metric its own subplot).
     """
-    tr = _safe_get(data, "tr_loss_list")
-    va = _safe_get(data, "va_loss_list")
-    te = _safe_get(data, "te_loss_list")
+    tr = safe_get(data, "tr_loss_list")
+    va = safe_get(data, "va_loss_list")
+    te = safe_get(data, "te_loss_list")
 
-    va_ece = _safe_get(data, "va_ece_list")
-    va_sharp = _safe_get(data, "va_sharp_list")
+    va_ece = safe_get(data, "va_ece_list")
+    va_sharp = safe_get(data, "va_sharp_list")
 
     other_keys = ["va_bag_nll_list", "va_crps_list", "va_mpiw_list", "va_interval_list", "va_check_list"]
-    others = {k: _safe_get(data, k) for k in other_keys}
+    others = {k: safe_get(data, k) for k in other_keys}
 
     # Prepare outpaths if provided (base + suffix)
     main_out = None
@@ -126,50 +118,71 @@ def plot_training_stats(data: Dict[str, Any], outpath: Optional[str]=None, show:
         plt.show()
     plt.close(fig_o)
 
+# EDITED BAR GRAPH FUNCTIONS
 def compare_ece_sharpness(data: Dict[str, Any], outpath: Optional[str]=None, show: bool=False):
     """
-    Compare testing ECE and sharpness between original, best, recalibrated original, and recalibrated best.
-    Uses keys: te_ece, te_ece_best, recal_te_ece, recal_te_ece_best (and analogous sharpness keys).
+    Compare testing ECE and sharpness between original and best models (trained with different ECE thresholds).
+    Creates a 2x2 plot:
+    - Row 1: Before Recalibration (ECE, Sharpness)
+    - Row 2: After Recalibration (ECE, Sharpness)
     """
-    labels = ["Original", "Best", "Recal Original", "Recal Best"]
+    thresholds = safe_get(data, "thresholds")
+    if thresholds is None:
+        print("Warning: 'thresholds' key not found. Skipping compare_ece_sharpness plot.")
+        return
 
-    # ECE keys
-    te_ece = _safe_get(data, "te_ece")
-    te_ece_best = _safe_get(data, "te_ece_best")
-    recal_te_ece = _safe_get(data, "recal_te_ece")
-    recal_te_ece_best = _safe_get(data, "recal_te_ece_best")
-
-    # Sharpness keys
-    te_sharp = _safe_get(data, "te_sharp_score")
-    te_sharp_best = _safe_get(data, "te_sharp_score_best")
-    recal_te_sharp = _safe_get(data, "recal_te_sharp_score")
-    recal_te_sharp_best = _safe_get(data, "recal_te_sharp_score_best")
-
-    ece_vals = [te_ece, te_ece_best, recal_te_ece, recal_te_ece_best]
-    sharp_vals = [te_sharp, te_sharp_best, recal_te_sharp, recal_te_sharp_best]
-
+    labels = ["Original"] + [f"Best@{t:.3f}" for t in thresholds]
     x = np.arange(len(labels))
-    width = 0.35
-    fig, axs = plt.subplots(1, 2, figsize=(12,5))
-    ax = axs[0]
-    bars_ece = ax.bar(x, [v if v is not None else np.nan for v in ece_vals], color='C0')
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=15)
-    ax.set_title("Test ECE comparison")
-    ax.grid(True, axis='y')
-    _annotate_bars(ax, bars_ece, fmt="{:.4f}", y_offset=0.0)
 
-    ax2 = axs[1]
-    bars_sharp = ax2.bar(x, [v if v is not None else np.nan for v in sharp_vals], color='C1')
-    ax2.set_xticks(x)
-    ax2.set_xticklabels(labels, rotation=15)
-    ax2.set_title("Test Sharpness comparison")
-    ax2.grid(True, axis='y')
-    _annotate_bars(ax2, bars_sharp, fmt="{:.4f}", y_offset=0.0)
+    # Data extraction
+    te_ece_orig = safe_get(data, "te_ece")
+    te_ece_best_list = safe_get(data, "te_ece_list_best", [])
+    te_sharp_orig = safe_get(data, "te_sharp_score")
+    te_sharp_best_list = safe_get(data, "te_sharp_score_list_best", [])
 
-    fig.tight_layout()
+    recal_te_ece_orig = safe_get(data, "recal_te_ece")
+    recal_te_ece_best_list = safe_get(data, "recal_te_ece_list_best", [])
+    recal_te_sharp_orig = safe_get(data, "recal_te_sharp_score")
+    recal_te_sharp_best_list = safe_get(data, "recal_te_sharp_score_list_best", [])
+
+    def pad_list(lst, length):
+        return (lst + [None] * length)[:length]
+
+    # Combine data for plotting
+    ece_vals_before = [te_ece_orig] + pad_list(te_ece_best_list, len(thresholds))
+    sharp_vals_before = [te_sharp_orig] + pad_list(te_sharp_best_list, len(thresholds))
+    ece_vals_after = [recal_te_ece_orig] + pad_list(recal_te_ece_best_list, len(thresholds))
+    sharp_vals_after = [recal_te_sharp_orig] + pad_list(recal_te_sharp_best_list, len(thresholds))
+
+    def to_nan(l):
+        return [v if v is not None else np.nan for v in l]
+
+    fig, axs = plt.subplots(2, 2, figsize=(max(12, 1.5 * len(labels)), 10), sharex=True)
+
+    def plot_bars(ax, values, title):
+        bars = ax.bar(x, to_nan(values))
+        ax.set_title(title)
+        ax.grid(True, axis='y')
+        _annotate_bars(ax, bars, fmt="{:.4f}")
+
+    # Row 1: Before Recalibration
+    plot_bars(axs[0, 0], ece_vals_before, "ECE (Before Recalibration)")
+    plot_bars(axs[0, 1], sharp_vals_before, "Sharpness (Before Recalibration)")
+
+    # Row 2: After Recalibration
+    plot_bars(axs[1, 0], ece_vals_after, "ECE (After Recalibration)")
+    plot_bars(axs[1, 1], sharp_vals_after, "Sharpness (After Recalibration)")
+
+    plt.setp(axs[1, :], xticks=x, xticklabels=labels)
+    for ax in axs[1, :]:
+        plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+
+    fig.suptitle("Test ECE and Sharpness Comparison", fontsize=16)
+    fig.tight_layout(rect=[0, 0.03, 1, 0.95])
+
     if outpath:
-        os.makedirs(os.path.dirname(outpath), exist_ok=True)
+        out_dir = os.path.dirname(outpath)
+        if out_dir: os.makedirs(out_dir, exist_ok=True)
         fig.savefig(outpath, dpi=150)
     if show:
         plt.show()
@@ -177,79 +190,172 @@ def compare_ece_sharpness(data: Dict[str, Any], outpath: Optional[str]=None, sho
 
 def compare_scoring_rules(data: Dict[str, Any], outpath: Optional[str]=None, show: bool=False):
     """
-    Compare bag_nll, crps, mpiw, interval, check on test set.
-    Uses keys with and without _best and recal_ prefixes: e.g., te_bag_nll, te_bag_nll_best, recal_te_bag_nll, recal_te_bag_nll_best.
+    Compare various scoring rules on the test set for original vs. best models.
+    Plots are arranged in two rows: before and after recalibration.
     """
-    metrics = ["bag_nll", "crps", "mpiw", "interval", "check", "cali_score"]
-    labels = ["Original", "Best", "Recal Original", "Recal Best"]
-
-    n = len(metrics)
-    fig, axs = plt.subplots(1, n, figsize=(4*n, 4), squeeze=False)
-    for i, m in enumerate(metrics):
-        k0 = f"te_{m}"
-        k1 = f"te_{m}_best"
-        k2 = f"recal_te_{m}"
-        k3 = f"recal_te_{m}_best"
-        vals = [_safe_get(data, k) for k in (k0, k1, k2, k3)]
-        ax = axs[0, i]
-        bars = ax.bar(np.arange(4), [v if v is not None else np.nan for v in vals], color=['C0','C1','C2','C3'])
-        ax.set_xticks(np.arange(4))
-        ax.set_xticklabels(labels, rotation=10)
-        ax.set_title(m)
-        ax.grid(True, axis='y')
-        _annotate_bars(ax, bars, fmt="{:.4f}", y_offset=0.0)
-
-    fig.tight_layout()
-    if outpath:
-        os.makedirs(os.path.dirname(outpath), exist_ok=True)
-        fig.savefig(outpath, dpi=150)
-    if show:
-        plt.show()
-    plt.close(fig)
-
-def calibration_plot(data: Dict[str, Any], outpath: Optional[str]=None, show: bool=False):
-    """
-    Plot observed props vs expected props for test set for:
-     - original (te_exp_props, te_obs_props)
-     - best (te_exp_props_best, te_obs_props_best)
-     - recalibrated original (use te_exp_props but recal_te_obs_props)
-     - recalibrated best (use te_exp_props_best but recal_te_obs_props_best)
-    """
-    series = []
-    # Original
-    if _safe_get(data, "te_exp_props") is not None and _safe_get(data, "te_obs_props") is not None:
-        series.append(("Original", data["te_exp_props"], data["te_obs_props"]))
-    # Best
-    if _safe_get(data, "te_exp_props_best") is not None and _safe_get(data, "te_obs_props_best") is not None:
-        series.append(("Best", data["te_exp_props_best"], data["te_obs_props_best"]))
-    # Recalibrated original
-    if _safe_get(data, "te_exp_props") is not None and _safe_get(data, "recal_te_obs_props") is not None:
-        series.append(("Recal Original", data["te_exp_props"], data["recal_te_obs_props"]))
-    # Recalibrated best
-    if _safe_get(data, "te_exp_props_best") is not None and _safe_get(data, "recal_te_obs_props_best") is not None:
-        series.append(("Recal Best", data["te_exp_props_best"], data["recal_te_obs_props_best"]))
-
-    if not series:
+    thresholds = safe_get(data, "thresholds")
+    if thresholds is None:
+        print("Warning: 'thresholds' key not found. Skipping compare_scoring_rules plot.")
         return
 
-    fig, ax = plt.subplots(figsize=(6,6))
-    for name, exp, obs in series:
-        exp_a = np.asarray(exp)
-        obs_a = np.asarray(obs)
-        ax.plot(exp_a, obs_a, marker='o', linestyle='-', label=name)
-    # diagonal
-    mn = 0.0
-    mx = 1.0
-    ax.plot([mn, mx], [mn, mx], 'k--', label='ideal')
-    ax.set_xlabel("Expected proportion")
-    ax.set_ylabel("Observed proportion")
-    ax.set_title("Calibration plot (test)")
-    ax.legend()
-    ax.grid(True)
-    fig.tight_layout()
+    metrics = ["bag_nll", "crps", "mpiw", "interval", "check", "cali_score"]
+    labels = ["Original"] + [f"Best@{t:.3f}" for t in thresholds]
+    x = np.arange(len(labels))
+
+    n_metrics = len(metrics)
+    fig, axs = plt.subplots(2, n_metrics, figsize=(max(4 * n_metrics, 1.5 * len(labels)), 8), sharex=True, squeeze=False)
+
+    def to_nan(l):
+        return [v if v is not None else np.nan for v in l]
+    
+    def pad_list(lst, length):
+        return (lst + [None] * length)[:length]
+
+    for i, m in enumerate(metrics):
+        ax_before = axs[0, i]
+        ax_after = axs[1, i]
+
+        k_orig_before = f"te_{m}"
+        k_best_before = f"te_{m}_list_best"
+        vals_before = [safe_get(data, k_orig_before)] + pad_list(safe_get(data, k_best_before, []), len(thresholds))
+
+        k_orig_after = f"recal_te_{m}"
+        k_best_after = f"recal_te_{m}_list_best"
+        vals_after = [safe_get(data, k_orig_after)] + pad_list(safe_get(data, k_best_after, []), len(thresholds))
+
+        bars_before = ax_before.bar(x, to_nan(vals_before))
+        ax_before.set_title(m)
+        ax_before.grid(True, axis='y')
+        _annotate_bars(ax_before, bars_before, fmt="{:.4f}")
+
+        bars_after = ax_after.bar(x, to_nan(vals_after))
+        ax_after.grid(True, axis='y')
+        _annotate_bars(ax_after, bars_after, fmt="{:.4f}")
+
+    plt.setp(axs[1, :], xticks=x, xticklabels=labels)
+    for ax in axs[1, :]:
+        plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+
+    axs[0, 0].set_ylabel("Before Recalibration", fontsize=12)
+    axs[1, 0].set_ylabel("After Recalibration", fontsize=12)
+
+    fig.suptitle("Test Scoring Rules Comparison", fontsize=16)
+    fig.tight_layout(rect=[0, 0.03, 1, 0.95])
+
     if outpath:
-        os.makedirs(os.path.dirname(outpath), exist_ok=True)
+        out_dir = os.path.dirname(outpath)
+        if out_dir: os.makedirs(out_dir, exist_ok=True)
         fig.savefig(outpath, dpi=150)
     if show:
         plt.show()
     plt.close(fig)
+
+# EDITED CALIBRATION GRAPH FUNCTION
+def calibration_plot(data: Dict[str, Any], outpath: Optional[str]=None, show: bool=False):
+    """
+    Plot calibration curves for original and best models.
+    Produces two plots:
+    1. All curves on a single axis.
+    2. Pairwise comparisons of each best model against the original model, in subplots.
+    """
+    thresholds = safe_get(data, "thresholds")
+    if thresholds is None:
+        print("Warning: 'thresholds' key not found. Skipping calibration_plot.")
+        return
+
+    # --- Data Extraction ---
+    orig_exp_props = safe_get(data, "te_exp_props")
+    orig_obs_props = safe_get(data, "te_obs_props")
+    recal_orig_obs_props = safe_get(data, "recal_te_obs_props")
+
+    best_exp_props_list = safe_get(data, "te_exp_props_list_best", [])
+    best_obs_props_list = safe_get(data, "te_obs_props_list_best", [])
+    recal_best_obs_props_list = safe_get(data, "recal_te_obs_props_list_best", [])
+
+    # Prepare outpaths for the two approaches
+    all_in_one_out = None
+    pairwise_out = None
+    if outpath:
+        base, ext = os.path.splitext(outpath)
+        if not ext: ext = ".png"
+        out_dir = os.path.dirname(base)
+        if out_dir: os.makedirs(out_dir, exist_ok=True)
+        all_in_one_out = f"{base}_all_in_one{ext}"
+        pairwise_out = f"{base}_pairwise{ext}"
+
+    # --- Approach 1: All curves on one plot ---
+    fig1, ax1 = plt.subplots(figsize=(10, 8))
+    ax1.plot([0, 1], [0, 1], 'k--', label='Ideal')
+
+    if orig_exp_props is not None and orig_obs_props is not None:
+        ax1.plot(orig_exp_props, orig_obs_props, marker='o', linestyle='-', label="Original")
+    if orig_exp_props is not None and recal_orig_obs_props is not None:
+        ax1.plot(orig_exp_props, recal_orig_obs_props, marker='x', linestyle='--', label="Recal Original")
+
+    for i, t in enumerate(thresholds):
+        if i < len(best_exp_props_list) and best_exp_props_list[i] is not None:
+            q_preds_best = best_exp_props_list[i]
+            if i < len(best_obs_props_list) and best_obs_props_list[i] is not None:
+                ax1.plot(q_preds_best, best_obs_props_list[i], marker='.', linestyle='-', label=f"Best@{t:.3f}")
+            if i < len(recal_best_obs_props_list) and recal_best_obs_props_list[i] is not None:
+                ax1.plot(q_preds_best, recal_best_obs_props_list[i], marker='.', linestyle='--', label=f"Recal Best@{t:.3f}")
+
+    ax1.set_xlabel("Expected proportion (Quantile level)")
+    ax1.set_ylabel("Observed proportion")
+    ax1.set_title("Calibration Plot: All Models")
+    ax1.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    ax1.grid(True)
+    fig1.tight_layout(rect=[0, 0, 0.75, 1])
+
+    if all_in_one_out:
+        fig1.savefig(all_in_one_out, dpi=150)
+    if show:
+        plt.show()
+    plt.close(fig1)
+
+    # --- Approach 2: Pairwise comparison plots in subplots ---
+    valid_indices = [i for i, qp in enumerate(best_exp_props_list) if qp is not None and i < len(thresholds)]
+    if not valid_indices:
+        return
+
+    n_plots = len(valid_indices)
+    cols = min(3, n_plots)
+    rows = int(np.ceil(n_plots / cols))
+    fig2, axs2 = plt.subplots(rows, cols, figsize=(6 * cols, 5 * rows), squeeze=False, sharex=True, sharey=True)
+    axs2 = axs2.flatten()
+
+    for plot_idx, model_idx in enumerate(valid_indices):
+        ax = axs2[plot_idx]
+        t = thresholds[model_idx]
+        ax.plot([0, 1], [0, 1], 'k--', label='Ideal')
+
+        if orig_exp_props is not None and orig_obs_props is not None:
+            ax.plot(orig_exp_props, orig_obs_props, marker='o', linestyle='-', label="Original", color='gray')
+        if orig_exp_props is not None and recal_orig_obs_props is not None:
+            ax.plot(orig_exp_props, recal_orig_obs_props, marker='x', linestyle='--', label="Recal Original", color='dimgray')
+
+        q_preds_best = best_exp_props_list[model_idx]
+        if model_idx < len(best_obs_props_list) and best_obs_props_list[model_idx] is not None:
+             ax.plot(q_preds_best, best_obs_props_list[model_idx], marker='o', linestyle='-', label="Best")
+        if model_idx < len(recal_best_obs_props_list) and recal_best_obs_props_list[model_idx] is not None:
+             ax.plot(q_preds_best, recal_best_obs_props_list[model_idx], marker='x', linestyle='--', label="Recal Best")
+        
+        ax.set_title(f"Threshold <= {t:.3f}")
+        ax.legend()
+        ax.grid(True)
+        if plot_idx >= (rows - 1) * cols:
+            ax.set_xlabel("Expected proportion")
+        if plot_idx % cols == 0:
+            ax.set_ylabel("Observed proportion")
+
+    for i in range(n_plots, len(axs2)):
+        axs2[i].set_visible(False)
+
+    fig2.suptitle("Calibration Plot: Pairwise Comparisons with Original", fontsize=16)
+    fig2.tight_layout(rect=[0, 0.03, 1, 0.95])
+
+    if pairwise_out:
+        fig2.savefig(pairwise_out, dpi=150)
+    if show:
+        plt.show()
+    plt.close(fig2)
