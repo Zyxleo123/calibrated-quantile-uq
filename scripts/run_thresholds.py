@@ -71,7 +71,8 @@ def main():
     if args.datasets:
         datasets = [d.strip() for d in args.datasets.split(",") if d.strip()]
     else:
-        datasets = ["boston", "concrete", "energy", "kin8nm", "naval", "power", "protein", "wine", "yacht"]
+        # datasets = ["boston", "concrete", "energy", "kin8nm", "naval", "power", "protein", "wine", "yacht"]
+        datasets = ["boston", "concrete", "energy", "wine", "yacht"]
 
     results_dir = args.save_dir
     os.makedirs(results_dir, exist_ok=True)

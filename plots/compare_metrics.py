@@ -21,13 +21,20 @@ def gather_all_metrics(dataset_name: str, our_results_path: str, reported_data: 
 
     ece_list = safe_get(data, 'te_ece_list_best', [])
     sharpness_list = safe_get(data, 'te_sharp_score_list_best', [])
+    recal_ece_list = safe_get(data, 'recal_te_ece_list_best', [])
+    recal_sharpness_list = safe_get(data, 'recal_te_sharp_score_list_best', [])
     thresholds = safe_get(data, 'thresholds', [])
 
     for ece, sharpness, thr in zip(ece_list, sharpness_list, thresholds):
         if ece is None or sharpness is None:
             continue
         all_points.append({"name": f"Our Method (thr={thr:.2f})", "ece": ece, "sharpness": sharpness, "source": "Ours"})
-        
+
+    for ece, sharpness, thr in zip(recal_ece_list, recal_sharpness_list, thresholds):
+        if ece is None or sharpness is None:
+            continue
+        all_points.append({"name": f"Our Method (recal, thr={thr:.2f})", "ece": ece, "sharpness": sharpness, "source": "Ours"})
+
     return all_points
 
 
@@ -161,10 +168,14 @@ def compare_and_rank_methods(
 
 
 if __name__ == '__main__':
-    # -- Main entry point for running the analyses ---
+    from glob import glob
 
-    compare_and_rank_methods(
-        dataset_name="boston", 
-        results_path="results/boston_lossscaled_batch_cal_ens1_bootFalse_seed0_thres0.0-0.2.pkl",
-        output_path="reports/boston_report.txt"
-    )
+    results_dir = "results"
+    results_files = glob(os.path.join(results_dir, "*.pkl"))
+    for results_file in results_files:
+        dataset_name = os.path.basename(results_file).split("_")[0]
+        compare_and_rank_methods(
+            dataset_name=dataset_name,
+            results_path=results_file,
+            output_path=f"reports/{dataset_name}_report.txt"
+        )

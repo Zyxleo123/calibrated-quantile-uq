@@ -258,9 +258,9 @@ if __name__ == "__main__":
                 args.min_thres,
                 args.max_thres
             )
-    # if os.path.exists(save_file_name):
-        # print("skipping {}".format(save_file_name))
-        # sys.exit()
+    if os.path.exists(save_file_name):
+        print("skipping {}".format(save_file_name))
+        sys.exit()
 
     # Set seeds
     set_seeds(args.seed)

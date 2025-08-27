@@ -1,0 +1,56 @@
+======================================================================
+  Analysis Report for Dataset: Concrete
+======================================================================
+
+Calculated Weights for Ranking:
+  - Var(ECE): 0.0010 -> Weight(ECE): 978.4700
+  - Var(Sharpness): 0.0192 -> Weight(Sharpness): 51.9986
+
+--- Pareto Frontier Analysis ---
+Models that are not dominated by any other model:
+  - Our Method (recal, thr=0.07) | ECE:  0.04, Sharpness:  0.36
+  - Our Method (recal, thr=0.09) | ECE:  0.04, Sharpness:  0.36
+  - Our Method (recal, thr=0.11) | ECE:  0.04, Sharpness:  0.36
+  - Our Method (recal, thr=0.13) | ECE:  0.04, Sharpness:  0.36
+  - Our Method (recal, thr=0.16) | ECE:  0.04, Sharpness:  0.36
+  - Interval                  | ECE:  0.04, Sharpness:  0.18
+  - MAQR                      | ECE:  0.05, Sharpness:  0.16
+  - mPAIC                     | ECE:  0.06, Sharpness:  0.14
+  - Our Method (thr=0.07)     | ECE:  0.08, Sharpness:  0.13
+  - Our Method (thr=0.09)     | ECE:  0.08, Sharpness:  0.13
+  - Our Method (thr=0.11)     | ECE:  0.08, Sharpness:  0.13
+  - Our Method (thr=0.13)     | ECE:  0.08, Sharpness:  0.13
+  - Our Method (thr=0.16)     | ECE:  0.08, Sharpness:  0.13
+  - SQR                       | ECE:  0.09, Sharpness:  0.07
+
+--- Dominated Models ---
+  - Cali                      | ECE:  0.06, Sharpness:  0.17
+  - Our Method (recal, thr=0.18) | ECE:  0.05, Sharpness:  0.50
+  - Our Method (recal, thr=0.20) | ECE:  0.05, Sharpness:  0.50
+  - Our Method (thr=0.18)     | ECE:  0.14, Sharpness:  0.11
+  - Our Method (thr=0.20)     | ECE:  0.14, Sharpness:  0.11
+
+--- Overall Ranking (based on weighted score) ---
+Rank  Method Name               ECE      Sharpness    Score     
+------------------------------------------------------------------
+1     Interval                  0.04     0.18         45.62      *
+2     Our Method (recal, thr=0.07) 0.04     0.36         53.77      *
+3     Our Method (recal, thr=0.09) 0.04     0.36         53.77      *
+4     Our Method (recal, thr=0.11) 0.04     0.36         53.77      *
+5     Our Method (recal, thr=0.13) 0.04     0.36         53.77      *
+6     Our Method (recal, thr=0.16) 0.04     0.36         53.77      *
+7     MAQR                      0.05     0.16         60.18      *
+8     Cali                      0.06     0.17         63.79       
+9     mPAIC                     0.06     0.14         68.05      *
+10    Our Method (recal, thr=0.18) 0.05     0.50         70.15       
+11    Our Method (recal, thr=0.20) 0.05     0.50         70.15       
+12    Our Method (thr=0.07)     0.08     0.13         81.86      *
+13    Our Method (thr=0.09)     0.08     0.13         81.86      *
+14    Our Method (thr=0.11)     0.08     0.13         81.86      *
+15    Our Method (thr=0.13)     0.08     0.13         81.86      *
+16    Our Method (thr=0.16)     0.08     0.13         81.86      *
+17    SQR                       0.09     0.07         94.64      *
+18    Our Method (thr=0.18)     0.14     0.11         144.19      
+19    Our Method (thr=0.20)     0.14     0.11         144.19      
+------------------------------------------------------------------
+'*' indicates model is on the Pareto frontier.
