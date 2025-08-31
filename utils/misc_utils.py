@@ -11,6 +11,7 @@ from numpy import histogramdd
 
 from argparse import Namespace
 import sys
+from bisect import bisect_left
 
 sys.path.append("/home/master/rs/uq/toolkit/uq_toolkit")
 from quantile_models import (
@@ -56,6 +57,7 @@ def test_uq(
     recal_type=None,
     make_plots=False,
     test_group_cal=False,
+    output_sharp_score_only=False
 ):
 
     # obs_props, quantile_preds, quantile_preds_mat = \
@@ -63,7 +65,7 @@ def test_uq(
     #                   recal_type=recal_type)
 
     num_pts = x.shape[0]
-    y = y.detach().cpu().reshape(num_pts, -1)
+    y = y.detach().reshape(num_pts, -1)
 
     quantile_preds = model.predict_q(
         x,
@@ -76,6 +78,13 @@ def test_uq(
 
     assert exp_props.shape == obs_props.shape
 
+    order = torch.argsort(y.flatten())
+    q_025 = quantile_preds[:, get_q_idx(exp_props, 0.025)][order]
+    q_975 = quantile_preds[:, get_q_idx(exp_props, 0.975)][order]
+    sharp_score = torch.mean(q_975 - q_025).item() / y_range
+    if output_sharp_score_only:
+        return sharp_score
+
     idx_01 = get_q_idx(exp_props, 0.01)
     idx_99 = get_q_idx(exp_props, 0.99)
     cali_score = plot_calibration_curve(
@@ -83,11 +92,6 @@ def test_uq(
         obs_props[idx_01 : idx_99 + 1],
         make_plots=make_plots,
     )
-
-    order = torch.argsort(y.flatten())
-    q_025 = quantile_preds[:, get_q_idx(exp_props, 0.025)][order]
-    q_975 = quantile_preds[:, get_q_idx(exp_props, 0.975)][order]
-    sharp_score = torch.mean(q_975 - q_025).item() / y_range
 
     if make_plots:
         plt.figure(figsize=(8, 5))
@@ -121,7 +125,7 @@ def test_uq(
 
     """ Get some scoring rules """
     args = Namespace(
-        device=torch.device("cpu"), q_list=torch.linspace(0.01, 0.99, 99)
+        device=model.device, q_list=torch.linspace(0.01, 0.99, 99)
     )
     curr_crps = crps_score(model, x, y, args)
     curr_nll = bag_nll(model, x, y, args)
@@ -291,6 +295,95 @@ def discretize_domain_old(x_arr, min_pts):
     assert np.array([x.size > 0 for x in group_data_idxs]).all()
 
     return group_data_idxs
+
+
+class EceSharpTracker:
+    """
+    Maintain a capacity-limited list of entries sorted by ece (ascending).
+    Each entry is a dict: {'ece': float, 'sharp': float, 'model': object}
+    Insertion rules:
+      - Find insertion pos by ece to keep the list sorted ascending.
+      - If new sharp is worse than left neighbors, clamp to left neighbor's sharp and adopt its model.
+      - If new sharp is smaller than right neighbors, level rightward entries' sharp to preserve non-increasing sharpness.
+    """
+
+    def __init__(self):
+        self.entries = []  # sorted by ece ascending
+
+    def _find_insert_pos(self, ece_val):
+        # first index with ece > ece_val
+        lo = 0
+        hi = len(self.entries)
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if self.entries[mid]["ece"] <= ece_val:
+                lo = mid + 1
+            else:
+                hi = mid
+        return lo
+
+    def insert(self, ece_val, sharp_val, model_obj=None):
+        """
+        Try to insert (ece_val, sharp_val, model_obj).
+        Always insert. If the new sharp is worse than the left neighbor,
+        clamp it to the left neighbor's sharp and replace the model with the left neighbor's model.
+        When leveling rightwards, if any right entry's sharp is reduced, replace its model
+        with the previous entry's model as well.
+        Returns True (insertion always happens unless capacity trimming logic removes it).
+        """
+        pos = self._find_insert_pos(ece_val)
+        left_sharp = (
+            self.entries[pos - 1]["sharp"] if pos - 1 >= 0 else None
+        )
+        left_model = (
+            self.entries[pos - 1]["model"] if pos - 1 >= 0 else None
+        )
+        # If new sharp is worse than left neighbor, clamp to left and adopt its model
+        if left_sharp is not None and sharp_val > left_sharp:
+            sharp_val = left_sharp
+            # replace model with left neighbor's model to preserve better model
+            if left_model is not None:
+                model_obj = left_model
+
+        new_entry = {
+            "ece": float(ece_val),
+            "sharp": float(sharp_val),
+            "model": model_obj,
+        }
+        self.entries.insert(pos, new_entry)
+
+        # Level any right entry to the same sharpness if > current
+        for i in range(pos + 1, len(self.entries)):
+            if self.entries[i]["sharp"] > sharp_val:
+                self.entries[i]["sharp"] = sharp_val
+                self.entries[i]["model"] = model_obj
+            else:
+                break
+
+        # Remove if too close to neighbor in both ece and sharp
+        epsilon = 1e-6
+        remove = False
+        # Check left neighbor
+        if pos - 1 >= 0:
+            left = self.entries[pos - 1]
+            if abs(left["ece"] - new_entry["ece"]) < epsilon and abs(left["sharp"] - new_entry["sharp"]) < epsilon:
+                remove = True
+        # Check right neighbor
+        if not remove and pos + 1 < len(self.entries):
+            right = self.entries[pos + 1]
+            if abs(right["ece"] - new_entry["ece"]) < epsilon and abs(right["sharp"] - new_entry["sharp"]) < epsilon:
+                remove = True
+        if remove:
+            self.entries.pop(pos)
+            return None
+
+        return self.entries[pos]
+
+    def get_entries(self):
+        return list(self.entries)
+
+    def clear(self):
+        self.entries = []
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ from copy import deepcopy
 import tqdm
 import numpy as np
 import torch
+import torch.nn as nn
 
 # sys.path.append('../utils/NNKit')
 # sys.path.append('utils')
@@ -113,6 +114,93 @@ def get_ens_pred_conf_bound(unc_preds, taus, conf_level=0.95, score_distr="z"):
     return out
 
 
+# New: small, isolated enhanced MLP that supports residuals, batch-norm, layer-norm and dropout.
+class EnhancedMLP(nn.Module):
+    def __init__(
+        self,
+        input_size,
+        output_size,
+        hidden_size,
+        num_layers,
+        residual=False,
+        batch_norm=False,
+        layer_norm=False,
+        dropout=0.0,
+        activation="relu",
+    ):
+        super().__init__()
+        assert num_layers >= 1, "num_layers must be >=1"
+        self.num_layers = num_layers
+        self.residual = residual
+        self.batch_norm = batch_norm
+        self.layer_norm = layer_norm
+        self.dropout_p = float(dropout) if dropout is not None else 0.0
+
+        act_map = {
+            "relu": nn.ReLU(),
+            "elu": nn.ELU(),
+            "tanh": nn.Tanh(),
+            "leaky_relu": nn.LeakyReLU(),
+        }
+        self.act = act_map.get(activation, nn.ReLU())
+
+        # Build layers: first layer input -> hidden (if num_layers>1), then (num_layers-1) hidden layers, final linear to output
+        self.hidden_size = hidden_size
+        self.linears = nn.ModuleList()
+        self.norms = nn.ModuleList()
+        self.dropouts = nn.ModuleList()
+
+        if num_layers == 1:
+            # single linear mapping input->output
+            self.final = nn.Linear(input_size, output_size)
+        else:
+            # first hidden layer
+            self.linears.append(nn.Linear(input_size, hidden_size))
+            self.norms.append(
+                nn.BatchNorm1d(hidden_size) if batch_norm else (nn.LayerNorm(hidden_size) if layer_norm else nn.Identity())
+            )
+            self.dropouts.append(nn.Dropout(self.dropout_p) if self.dropout_p > 0 else nn.Identity())
+
+            # middle hidden layers (hidden->hidden)
+            for _ in range(num_layers - 2):
+                self.linears.append(nn.Linear(hidden_size, hidden_size))
+                self.norms.append(
+                    nn.BatchNorm1d(hidden_size) if batch_norm else (nn.LayerNorm(hidden_size) if layer_norm else nn.Identity())
+                )
+                self.dropouts.append(nn.Dropout(self.dropout_p) if self.dropout_p > 0 else nn.Identity())
+
+            # final projection from hidden to output
+            self.final = nn.Linear(hidden_size, output_size)
+
+    def forward(self, x):
+        # x: (batch, features)
+        if self.num_layers == 1:
+            return self.final(x)
+        h = x
+        # first hidden
+        h = self.linears[0](h)
+        norm0 = self.norms[0]
+        h = norm0(h)
+        h = self.act(h)
+        h = self.dropouts[0](h)
+
+        # middle hidden layers
+        for i in range(1, len(self.linears)):
+            inp = h
+            h = self.linears[i](h)
+            norm = self.norms[i]
+            h = norm(h)
+            h = self.act(h)
+            h = self.dropouts[i](h)
+            if self.residual:
+                # add residual only when shapes match (they should for hidden->hidden)
+                if inp.shape == h.shape:
+                    h = h + inp
+
+        out = self.final(h)
+        return out
+
+
 class QModelEns(uq_model):
     def __init__(
         self,
@@ -124,16 +212,28 @@ class QModelEns(uq_model):
         wd,
         num_ens,
         device,
+        # New options for layer-wise tricks:
+        residual=False,
+        batch_norm=False,
+        layer_norm=False,
+        dropout=0.0,
+        activation="relu",
     ):
 
         self.num_ens = num_ens
         self.device = device
+        # Instantiate EnhancedMLP for each ensemble member (isolated from QModelEns logic)
         self.model = [
-            vanilla_nn(
+            EnhancedMLP(
                 input_size=input_size,
                 output_size=output_size,
                 hidden_size=hidden_size,
                 num_layers=num_layers,
+                residual=residual,
+                batch_norm=batch_norm,
+                layer_norm=layer_norm,
+                dropout=dropout,
+                activation=activation,
             ).to(device)
             for _ in range(num_ens)
         ]
@@ -352,7 +452,7 @@ class QModelEns(uq_model):
                     raise ValueError("recal_type incorrect")
             else:
                 in_p = float(p)
-            p_tensor = (in_p * torch.ones(num_x)).reshape(-1, 1)
+            p_tensor = (in_p * torch.ones(num_x)).reshape(-1, 1).to(self.device)
             cdf_in = torch.cat([x, p_tensor], dim=1).to(self.device)
             cdf_pred = self.predict(cdf_in)  # shape (num_x, 1)
             cdf_preds.append(cdf_pred)

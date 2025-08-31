@@ -15,6 +15,7 @@ from utils.misc_utils import (
     get_q_idx,
     discretize_domain,
     gather_loss_per_q,
+    EceSharpTracker,
 )
 from recal import iso_recal
 from utils.q_model_ens import QModelEns
@@ -63,9 +64,6 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
-        "--min_thres", type=float, default=0.0, help="Minimum ECE threshold"
-    )
-    parser.add_argument(
         "--max_thres", type=float, default=0.2, help="Maximum ECE threshold"
     )
 
@@ -111,6 +109,38 @@ def parse_args():
 
     parser.add_argument("--loss", type=str, default='scaled_batch_cal',
                         help="specify type of loss")
+
+    # New model architecture / regularization flags
+    parser.add_argument(
+        "--residual",
+        type=int,
+        default=0,
+        help="1 to enable residual connections between hidden layers",
+    )
+    parser.add_argument(
+        "--batch_norm",
+        type=int,
+        default=0,
+        help="1 to enable BatchNorm on hidden layers",
+    )
+    parser.add_argument(
+        "--layer_norm",
+        type=int,
+        default=0,
+        help="1 to enable LayerNorm on hidden layers (ignored if batch_norm enabled)",
+    )
+    parser.add_argument(
+        "--dropout",
+        type=float,
+        default=0.0,
+        help="dropout probability to apply on each hidden layer",
+    )
+    parser.add_argument(
+        "--activation",
+        type=str,
+        default="relu",
+        help="activation to use in MLP (relu, elu, tanh, leaky_relu)",
+    )
 
     # only for cali losses
     parser.add_argument(
@@ -171,6 +201,12 @@ def parse_args():
     args.recal = bool(args.recal)
     args.debug = bool(args.debug)
 
+    # normalize new flags to booleans consistent with other flags
+    args.residual = bool(args.residual)
+    args.batch_norm = bool(args.batch_norm)
+    args.layer_norm = bool(args.layer_norm)
+    # dropout and activation left as-is (float and str)
+
     if args.boot:
         if not args.num_ens > 1:
             raise RuntimeError("num_ens must be above > 1 for bootstrap")
@@ -222,20 +258,19 @@ if __name__ == "__main__":
 
     # Save file name
     if "penalty" not in args.loss:
-        save_file_name = "{}/{}_loss{}_ens{}_boot{}_seed{}_thres{}-{}.pkl".format(
+        save_file_name = "{}/{}_loss{}_ens{}_boot{}_seed{}_thres{}.pkl".format(
             args.save_dir,
             args.data,
             args.loss,
             args.num_ens,
             args.boot,
             args.seed,
-            args.min_thres,
             args.max_thres
         )
     else:
         # penalizing sharpness
         if args.sharp_all is not None and args.sharp_all:
-            save_file_name = "{}/{}_loss{}_pen{}_sharpall_ens{}_boot{}_seed{}_thres{}-{}.pkl".format(
+            save_file_name = "{}/{}_loss{}_pen{}_sharpall_ens{}_boot{}_seed{}_thres{}.pkl".format(
                 args.save_dir,
                 args.data,
                 args.loss,
@@ -243,11 +278,10 @@ if __name__ == "__main__":
                 args.num_ens,
                 args.boot,
                 args.seed,
-                args.min_thres,
                 args.max_thres
             )
         elif args.sharp_all is not None and not args.sharp_all:
-            save_file_name = "{}/{}_loss{}_pen{}_wideonly_ens{}_boot{}_seed{}_thres{}-{}.pkl".format(
+            save_file_name = "{}/{}_loss{}_pen{}_wideonly_ens{}_boot{}_seed{}_thres{}.pkl".format(
                 args.save_dir,
                 args.data,
                 args.loss,
@@ -255,7 +289,6 @@ if __name__ == "__main__":
                 args.num_ens,
                 args.boot,
                 args.seed,
-                args.min_thres,
                 args.max_thres
             )
     if os.path.exists(save_file_name):
@@ -300,6 +333,11 @@ if __name__ == "__main__":
         wd=args.wd,
         num_ens=args.num_ens,
         device=args.device,
+        residual=args.residual,
+        batch_norm=args.batch_norm,
+        layer_norm=args.layer_norm,
+        dropout=args.dropout,
+        activation=args.activation,
     )
 
     # Data loader
@@ -335,12 +373,7 @@ if __name__ == "__main__":
     va_sharp_list = []
     va_ece_list = []
 
-    # New: Setup for 10 thresholds
-    NUM_THRESHOLDS = 10
-    thresholds = np.linspace(args.min_thres, args.max_thres, NUM_THRESHOLDS)
-    print(f"Using {NUM_THRESHOLDS} thresholds: {np.round(thresholds, 4)}")
-    best_sharp_scores = [float("inf")] * NUM_THRESHOLDS
-    best_models = [None] * NUM_THRESHOLDS
+    best_tracker = EceSharpTracker()
 
 
     # setting batch groupings
@@ -424,93 +457,94 @@ if __name__ == "__main__":
         )
         va_loss_list.append(ep_va_loss)
 
-        # Test loss
-        x_te, y_te = x_te.to(args.device), y_te.to(args.device)
-        with torch.no_grad():
-            ep_te_loss = model_ens.loss(
-                loss_fn,
-                x_te,
-                y_te,
-                va_te_q_list,
-                batch_q=batch_loss,
-                take_step=False,
-                args=args,
-            )
-        te_loss_list.append(ep_te_loss)
+        # # Test loss
+        # x_te, y_te = x_te.to(args.device), y_te.to(args.device)
+        # with torch.no_grad():
+        #     ep_te_loss = model_ens.loss(
+        #         loss_fn,
+        #         x_te,
+        #         y_te,
+        #         va_te_q_list,
+        #         batch_q=batch_loss,
+        #         take_step=False,
+        #         args=args,
+        #     )
+        # te_loss_list.append(ep_te_loss)
 
         # Printing some losses
         if (ep % 200 == 0) or (ep == args.num_ep - 1):
             print("EP:{}".format(ep))
             print("Train loss {}".format(ep_tr_loss))
             print("Val loss {}".format(ep_va_loss))
-            print("Test loss {}".format(ep_te_loss))
 
-        # ECE thresholding and best sharpness model selection for each threshold
-        model_ens.use_device(torch.device("cpu"))
-        _, sharp_score, _, _, _, _ = test_uq(
-            model_ens,
-            x_va.cpu(),
-            y_va.cpu(),
-            va_te_q_list.cpu(),
-            y_range,
-            recal_model=None,
-            recal_type=None,
-        )
+        validation_device = torch.device("cpu")
+        model_ens.use_device(validation_device)
         ece = average_calibration(
             model_ens,
-            x_va.cpu(),
-            y_va.cpu(),
+            x_va.to(validation_device),
+            y_va.to(validation_device),
             args=Namespace(
-                exp_props=va_te_q_list.cpu(),
-                device=torch.device("cpu"),
+                exp_props=va_te_q_list.to(validation_device),
+                device=validation_device,
                 metric="cal_q"
             )
         )
-        args_for_score = Namespace(device=torch.device("cpu"), q_list=va_te_q_list.cpu())
-        try:
-            va_bag = float(bag_nll(model_ens, x_va.cpu(), y_va.cpu(), args_for_score))
-            va_crps = float(crps_score(model_ens, x_va.cpu(), y_va.cpu(), args_for_score))
-            va_mpiw_val = mpiw(model_ens, x_va.cpu(), y_va.cpu(), args_for_score)
-            va_mpiw = float(torch.mean(va_mpiw_val).item()) if isinstance(va_mpiw_val, torch.Tensor) else float(va_mpiw_val)
-            va_int_val = float(interval_score(model_ens, x_va.cpu(), y_va.cpu(), args_for_score))
-            va_interval = va_int_val
-            va_check = float(check_loss(model_ens, x_va.cpu(), y_va.cpu(), args_for_score))
-        except Exception as e:
-            raise ValueError(f"Scoring rule computation failed in EP {ep}: {e}")
+        if ece > args.max_thres:
+            model_ens.use_device(args.device)
+            continue
 
-        va_bag_nll_list.append(va_bag)
-        va_crps_list.append(va_crps)
-        va_mpiw_list.append(va_mpiw)
-        va_interval_list.append(va_interval)
-        va_check_list.append(va_check)
+        sharp_score = test_uq(
+            model_ens,
+            x_va.to(validation_device),
+            y_va.to(validation_device),
+            va_te_q_list.to(validation_device),
+            y_range,
+            recal_model=None,
+            recal_type=None,
+            output_sharp_score_only=True
+        )
         model_ens.use_device(args.device)
+        # args_for_score = Namespace(device=torch.device("cpu"), q_list=va_te_q_list.cpu())
+        # try:
+        #     va_bag = float(bag_nll(model_ens, x_va.cpu(), y_va.cpu(), args_for_score))
+        #     va_crps = float(crps_score(model_ens, x_va.cpu(), y_va.cpu(), args_for_score))
+        #     va_mpiw_val = mpiw(model_ens, x_va.cpu(), y_va.cpu(), args_for_score)
+        #     va_mpiw = float(torch.mean(va_mpiw_val).item()) if isinstance(va_mpiw_val, torch.Tensor) else float(va_mpiw_val)
+        #     va_int_val = float(interval_score(model_ens, x_va.cpu(), y_va.cpu(), args_for_score))
+        #     va_interval = va_int_val
+        #     va_check = float(check_loss(model_ens, x_va.cpu(), y_va.cpu(), args_for_score))
+        # except Exception as e:
+        #     raise ValueError(f"Scoring rule computation failed in EP {ep}: {e}")
+
+        # va_bag_nll_list.append(va_bag)
+        # va_crps_list.append(va_crps)
+        # va_mpiw_list.append(va_mpiw)
+        # va_interval_list.append(va_interval)
+        # va_check_list.append(va_check)
+        # model_ens.use_device(args.device)
 
         va_sharp_list.append(sharp_score)
         va_ece_list.append(ece)
 
-        # New: Check against all 10 thresholds
-        for i, thres in enumerate(thresholds):
-            if ece < thres:
-                if sharp_score < best_sharp_scores[i]:
-                    best_sharp_scores[i] = sharp_score
-                    best_models[i] = deepcopy(model_ens)
-                    print(f"EP: {ep}, Thres: {thres:.4f} | ECE: {ece:.4f} < {thres:.4f} | New best sharpness: {best_sharp_scores[i]:.4f}")
+        best_tracker.insert(ece, sharp_score, deepcopy(model_ens))
 
     # Finished training
-    # Move everything to cpu
+    print(f"Total of admissable {len(best_tracker.entries)} entries recorded.")
+
+    # Move everything to testing device
+    testing_device = torch.device('cpu')
     x_tr, y_tr, x_va, y_va, x_te, y_te = (
-        x_tr.cpu(),
-        y_tr.cpu(),
-        x_va.cpu(),
-        y_va.cpu(),
-        x_te.cpu(),
-        y_te.cpu(),
+        x_tr.to(testing_device),
+        y_tr.to(testing_device),
+        x_va.to(testing_device),
+        y_va.to(testing_device),
+        x_te.to(testing_device),
+        y_te.to(testing_device),
     )
-    model_ens.use_device(torch.device("cpu"))
+    model_ens.use_device(testing_device)
 
     # Test UQ on val
-    print("Testing UQ on val")
-    va_exp_props = torch.linspace(-2.0, 3.0, 501)
+    va_exp_props = torch.linspace(-2.0, 3.0, 501, device=testing_device)
     va_cali_score, va_sharp_score, va_obs_props, va_q_preds, _, _ = test_uq(
         model_ens,
         x_va,
@@ -523,7 +557,7 @@ if __name__ == "__main__":
     reduced_va_q_preds = va_q_preds[
         :, get_q_idx(va_exp_props, 0.01) : get_q_idx(va_exp_props, 0.99) + 1
     ]
-    args_for_score = Namespace(device=torch.device("cpu"), q_list=torch.linspace(0.01, 0.99, 99))
+    args_for_score = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99, device=testing_device))
     va_bag_nll = float(bag_nll(model_ens, x_va, y_va, args_for_score))
     va_crps = float(crps_score(model_ens, x_va, y_va, args_for_score))
     va_mpiw_val = mpiw(model_ens, x_va, y_va, args_for_score)
@@ -536,14 +570,13 @@ if __name__ == "__main__":
         y_va,
         args=Namespace(
             exp_props=va_exp_props,
-            device=torch.device("cpu"),
+            device=testing_device,
             metric="cal_q"
         )
     )
 
     # Test UQ on test
-    print("Testing UQ on test")
-    te_exp_props = torch.linspace(0.01, 0.99, 99)
+    te_exp_props = torch.linspace(0.01, 0.99, 99, device=testing_device)
     (
         te_cali_score,
         te_sharp_score,
@@ -559,7 +592,7 @@ if __name__ == "__main__":
         y_range,
         recal_model=None,
         recal_type=None,
-        test_group_cal=True,
+        test_group_cal=False,
     )
     te_bag_nll = float(bag_nll(model_ens, x_te, y_te, args_for_score))
     te_crps = float(crps_score(model_ens, x_te, y_te, args_for_score))
@@ -573,14 +606,14 @@ if __name__ == "__main__":
         y_te,
         args=Namespace(
             exp_props=te_exp_props,
-            device=torch.device("cpu"),
+            device=testing_device,
             metric="cal_q"
         )
     )
 
     if args.recal:
         recal_model = iso_recal(va_exp_props, va_obs_props)
-        recal_exp_props = torch.linspace(0.01, 0.99, 99)
+        recal_exp_props = torch.linspace(0.01, 0.99, 99, device=testing_device)
 
         (
             recal_va_cali_score,
@@ -597,9 +630,9 @@ if __name__ == "__main__":
             y_range,
             recal_model=recal_model,
             recal_type="sklearn",
-            test_group_cal=True,
+            test_group_cal=False,
         )
-        args_recal = Namespace(device=torch.device("cpu"), recal_model=recal_model, recal_type="sklearn", q_list=torch.linspace(0.01,0.99,99))
+        args_recal = Namespace(device=testing_device, recal_model=recal_model, recal_type="sklearn", q_list=torch.linspace(0.01,0.99,99, device=testing_device))
         recal_va_bag_nll = float(bag_nll(model_ens, x_va, y_va, args_recal))
         recal_va_crps = float(crps_score(model_ens, x_va, y_va, args_recal))
         recal_va_mpiw_val = mpiw(model_ens, x_va, y_va, args_recal)
@@ -612,7 +645,7 @@ if __name__ == "__main__":
             y_va,
             args=Namespace(
                 exp_props=recal_exp_props,
-                device=torch.device("cpu"),
+                device=testing_device,
                 metric="cal_q",
                 recal_model=recal_model,
                 recal_type="sklearn"
@@ -634,7 +667,7 @@ if __name__ == "__main__":
             y_range,
             recal_model=recal_model,
             recal_type="sklearn",
-            test_group_cal=True,
+            test_group_cal=False,
         )
         recal_te_bag_nll = float(bag_nll(model_ens, x_te, y_te, args_recal))
         recal_te_crps = float(crps_score(model_ens, x_te, y_te, args_recal))
@@ -648,29 +681,24 @@ if __name__ == "__main__":
             y_te,
             args=Namespace(
                 exp_props=recal_exp_props,
-                device=torch.device("cpu"),
+                device=testing_device,
                 metric="cal_q",
                 recal_model=recal_model,
                 recal_type="sklearn"
             )
         )
 
-    # New: Evaluation loop for all best models
-    # Initialize lists to store metrics for each of the 10 best models
+    entries = best_tracker.get_entries()
     all_metrics_best = []
-    for idx_tmp, best_model_ens in enumerate(best_models):
-        print(f"\n--- Evaluating best model for threshold {thresholds[idx_tmp]:.4f} ---")
-        if best_model_ens is None:
-            print("No model found for this threshold.")
-            all_metrics_best.append(None)
-            continue
-        
+    for entry in entries:
+        best_model_ens = entry['model']
+
         current_metrics_tmp = {}
-        best_model_ens.use_device(torch.device("cpu"))
+        best_model_ens.use_device(testing_device)
 
         # Test UQ on val with best model
         print("Testing UQ on val with best model")
-        va_exp_props_best_tmp = torch.linspace(-2.0, 3.0, 501)
+        va_exp_props_best_tmp = torch.linspace(-2.0, 3.0, 501, device=testing_device)
         va_cali_score_tmp, va_sharp_score_tmp, va_obs_props_tmp, va_q_preds_tmp, _, _ = test_uq(
             best_model_ens, x_va, y_va, va_exp_props_best_tmp, y_range, recal_model=None, recal_type=None
         )
@@ -679,7 +707,7 @@ if __name__ == "__main__":
         current_metrics_tmp['va_obs_props_best'] = va_obs_props_tmp
         current_metrics_tmp['va_q_preds_best'] = va_q_preds_tmp
 
-        args_for_score_tmp = Namespace(device=torch.device("cpu"), q_list=torch.linspace(0.01, 0.99, 99))
+        args_for_score_tmp = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99, device=testing_device))
         current_metrics_tmp['va_bag_nll_best'] = float(bag_nll(best_model_ens, x_va, y_va, args_for_score_tmp))
         current_metrics_tmp['va_crps_best'] = float(crps_score(best_model_ens, x_va, y_va, args_for_score_tmp))
         va_mpiw_val_tmp = mpiw(best_model_ens, x_va, y_va, args_for_score_tmp)
@@ -687,14 +715,14 @@ if __name__ == "__main__":
         current_metrics_tmp['va_interval_best'] = float(interval_score(best_model_ens, x_va, y_va, args_for_score_tmp))
         current_metrics_tmp['va_check_best'] = float(check_loss(best_model_ens, x_va, y_va, args_for_score_tmp))
         current_metrics_tmp['va_ece_best'] = average_calibration(
-            best_model_ens, x_va, y_va, args=Namespace(exp_props=va_exp_props_best_tmp, device=torch.device("cpu"), metric="cal_q")
+            best_model_ens, x_va, y_va, args=Namespace(exp_props=va_exp_props_best_tmp, device=testing_device, metric="cal_q")
         )
 
         # Test UQ on test with best model
         print("Testing UQ on test with best model")
-        te_exp_props_best_tmp = torch.linspace(0.01, 0.99, 99)
+        te_exp_props_best_tmp = torch.linspace(0.01, 0.99, 99, device=testing_device)
         te_cali_score_tmp, te_sharp_score_tmp, te_obs_props_tmp, te_q_preds_tmp, te_g_cali_scores_tmp, te_scoring_rules_tmp = test_uq(
-            best_model_ens, x_te, y_te, te_exp_props_best_tmp, y_range, recal_model=None, recal_type=None, test_group_cal=True
+            best_model_ens, x_te, y_te, te_exp_props_best_tmp, y_range, recal_model=None, recal_type=None, test_group_cal=False
         )
         current_metrics_tmp['te_cali_score_best'] = te_cali_score_tmp
         current_metrics_tmp['te_sharp_score_best'] = te_sharp_score_tmp
@@ -710,18 +738,17 @@ if __name__ == "__main__":
         current_metrics_tmp['te_interval_best'] = float(interval_score(best_model_ens, x_te, y_te, args_for_score_tmp))
         current_metrics_tmp['te_check_best'] = float(check_loss(best_model_ens, x_te, y_te, args_for_score_tmp))
         current_metrics_tmp['te_ece_best'] = average_calibration(
-            best_model_ens, x_te, y_te, args=Namespace(exp_props=te_exp_props_best_tmp, device=torch.device("cpu"), metric="cal_q")
+            best_model_ens, x_te, y_te, args=Namespace(exp_props=te_exp_props_best_tmp, device=testing_device, metric="cal_q")
         )
 
         # Recalibration for best model
         if args.recal:
             recal_model_best_tmp = iso_recal(va_exp_props_best_tmp, va_obs_props_tmp)
             current_metrics_tmp['recal_model_best'] = recal_model_best_tmp
-            recal_exp_props_best_tmp = torch.linspace(0.01, 0.99, 99)
-            
+            recal_exp_props_best_tmp = torch.linspace(0.01, 0.99, 99, device=testing_device)
             # Recal on Val
             recal_va_cali_tmp, recal_va_sharp_tmp, recal_va_obs_tmp, recal_va_q_preds_tmp, recal_va_g_cali_tmp, recal_va_scoring_tmp = test_uq(
-                best_model_ens, x_va, y_va, recal_exp_props_best_tmp, y_range, recal_model=recal_model_best_tmp, recal_type="sklearn", test_group_cal=True
+                best_model_ens, x_va, y_va, recal_exp_props_best_tmp, y_range, recal_model=recal_model_best_tmp, recal_type="sklearn", test_group_cal=False
             )
             current_metrics_tmp['recal_va_cali_score_best'] = recal_va_cali_tmp
             current_metrics_tmp['recal_va_sharp_score_best'] = recal_va_sharp_tmp
@@ -730,18 +757,18 @@ if __name__ == "__main__":
             current_metrics_tmp['recal_va_g_cali_scores_best'] = recal_va_g_cali_tmp
             current_metrics_tmp['recal_va_scoring_rules_best'] = recal_va_scoring_tmp
 
-            args_recal_best_tmp = Namespace(device=torch.device("cpu"), recal_model=recal_model_best_tmp, recal_type="sklearn", q_list=torch.linspace(0.01,0.99,99))
+            args_recal_best_tmp = Namespace(device=testing_device, recal_model=recal_model_best_tmp, recal_type="sklearn", q_list=torch.linspace(0.01,0.99,99, device=testing_device))
             current_metrics_tmp['recal_va_bag_nll_best'] = float(bag_nll(best_model_ens, x_va, y_va, args_recal_best_tmp))
             current_metrics_tmp['recal_va_crps_best'] = float(crps_score(best_model_ens, x_va, y_va, args_recal_best_tmp))
             recal_va_mpiw_val_tmp = mpiw(best_model_ens, x_va, y_va, args_recal_best_tmp)
             current_metrics_tmp['recal_va_mpiw_best'] = float(torch.mean(recal_va_mpiw_val_tmp).item()) if isinstance(recal_va_mpiw_val_tmp, torch.Tensor) else float(recal_va_mpiw_val_tmp)
             current_metrics_tmp['recal_va_interval_best'] = float(interval_score(best_model_ens, x_va, y_va, args_recal_best_tmp))
             current_metrics_tmp['recal_va_check_best'] = float(check_loss(best_model_ens, x_va, y_va, args_recal_best_tmp))
-            current_metrics_tmp['recal_va_ece_best'] = average_calibration(best_model_ens, x_va, y_va, args=Namespace(exp_props=recal_exp_props_best_tmp, device=torch.device("cpu"), metric="cal_q", recal_model=recal_model_best_tmp, recal_type="sklearn"))
+            current_metrics_tmp['recal_va_ece_best'] = average_calibration(best_model_ens, x_va, y_va, args=Namespace(exp_props=recal_exp_props_best_tmp, device=testing_device, metric="cal_q", recal_model=recal_model_best_tmp, recal_type="sklearn"))
 
             # Recal on Test
             recal_te_cali_tmp, recal_te_sharp_tmp, recal_te_obs_tmp, recal_te_q_preds_tmp, recal_te_g_cali_tmp, recal_te_scoring_tmp = test_uq(
-                best_model_ens, x_te, y_te, recal_exp_props_best_tmp, y_range, recal_model=recal_model_best_tmp, recal_type="sklearn", test_group_cal=True
+                best_model_ens, x_te, y_te, recal_exp_props_best_tmp, y_range, recal_model=recal_model_best_tmp, recal_type="sklearn", test_group_cal=False
             )
             current_metrics_tmp['recal_te_cali_score_best'] = recal_te_cali_tmp
             current_metrics_tmp['recal_te_sharp_score_best'] = recal_te_sharp_tmp
@@ -756,7 +783,7 @@ if __name__ == "__main__":
             current_metrics_tmp['recal_te_mpiw_best'] = float(torch.mean(recal_te_mpiw_val_tmp).item()) if isinstance(recal_te_mpiw_val_tmp, torch.Tensor) else float(recal_te_mpiw_val_tmp)
             current_metrics_tmp['recal_te_interval_best'] = float(interval_score(best_model_ens, x_te, y_te, args_recal_best_tmp))
             current_metrics_tmp['recal_te_check_best'] = float(check_loss(best_model_ens, x_te, y_te, args_recal_best_tmp))
-            current_metrics_tmp['recal_te_ece_best'] = average_calibration(best_model_ens, x_te, y_te, args=Namespace(exp_props=recal_exp_props_best_tmp, device=torch.device("cpu"), metric="cal_q", recal_model=recal_model_best_tmp, recal_type="sklearn"))
+            current_metrics_tmp['recal_te_ece_best'] = average_calibration(best_model_ens, x_te, y_te, args=Namespace(exp_props=recal_exp_props_best_tmp, device=testing_device, metric="cal_q", recal_model=recal_model_best_tmp, recal_type="sklearn"))
         all_metrics_best.append(current_metrics_tmp)
 
 
@@ -778,9 +805,8 @@ if __name__ == "__main__":
         locals()[list_name] = dictlist_to_listdict(all_metrics_best, list_name.replace('_list_best', '_best'))
 
 
-    # New dynamic save dict construction
     save_var_names = [
-        "args", "model_ens", "thresholds",
+        "args",
 
         "tr_loss_list", "va_loss_list", "te_loss_list",
         "va_sharp_list", "va_ece_list", "va_bag_nll_list", "va_crps_list", "va_mpiw_list", "va_interval_list", "va_check_list",
@@ -790,7 +816,7 @@ if __name__ == "__main__":
         "va_cali_score", "va_exp_props", "va_obs_props", "va_q_preds", "va_bag_nll", "va_crps", "va_mpiw", "va_interval", "va_check",
         "te_cali_score", "te_exp_props", "te_obs_props", "te_q_preds", "te_bag_nll", "te_crps", "te_mpiw", "te_interval", "te_check", "te_g_cali_scores", "te_scoring_rules",
 
-        "recal_model", "recal_exp_props",
+        "recal_exp_props",
         "recal_va_sharp_score", "recal_te_sharp_score", "recal_va_ece", "recal_te_ece",
         "recal_va_cali_score", "recal_va_obs_props", "recal_va_q_preds", "recal_va_g_cali_scores", "recal_va_scoring_rules", "recal_va_bag_nll", "recal_va_crps", "recal_va_mpiw", "recal_va_interval", "recal_va_check",
         "recal_te_cali_score", "recal_te_obs_props", "recal_te_q_preds", "recal_te_g_cali_scores", "recal_te_scoring_rules", "recal_te_bag_nll", "recal_te_crps", "recal_te_mpiw", "recal_te_interval", "recal_te_check",
@@ -798,7 +824,6 @@ if __name__ == "__main__":
     
     # Add the lists of best model metrics
     save_var_names.extend(best_model_metric_keys)
-    save_var_names.append("best_models") # Save the list of models themselves
 
     save_dic = {}
     current_locals = locals()
@@ -809,12 +834,13 @@ if __name__ == "__main__":
             print(f"Warning: Variable '{name}' not found in locals for saving.")
             continue
     
-    # Fixed exp_props for best models
-    if any(best_models):
-        save_dic['va_exp_props_list_best'] = [torch.linspace(-2.0, 3.0, 501) for _ in best_models]
-        save_dic['te_exp_props_list_best'] = [torch.linspace(0.01, 0.99, 99) for _ in best_models]
+    # Fixed exp_props for best models (based on tracker entries)
+    if len(entries) > 0:
+        num_saved = len(entries)
+        save_dic['va_exp_props_list_best'] = [torch.linspace(-2.0, 3.0, 501) for _ in range(num_saved)]
+        save_dic['te_exp_props_list_best'] = [torch.linspace(0.01, 0.99, 99) for _ in range(num_saved)]
         if args.recal:
-            save_dic['recal_exp_props_list_best'] = [torch.linspace(0.01, 0.99, 99) for _ in best_models]
+            save_dic['recal_exp_props_list_best'] = [torch.linspace(0.01, 0.99, 99) for _ in range(num_saved)]
 
     # Persist
     with open(save_file_name, "wb") as pf:
