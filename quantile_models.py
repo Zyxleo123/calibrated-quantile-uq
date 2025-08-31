@@ -329,7 +329,7 @@ def get_obs_props(model, X, y, exp_props, device, type,  # all done
     """
 
     if exp_props is None:
-        exp_props = torch.linspace(0.01, 0.99, 99)
+        exp_props = torch.linspace(0.01, 0.99, 99, device=device)
     else:
         exp_props = exp_props.flatten()
 
@@ -351,7 +351,7 @@ def get_obs_props(model, X, y, exp_props, device, type,  # all done
             else:
                 raise ValueError('recal_type incorrect')
 
-        p_tensor = (p * torch.ones(num_pts)).reshape(-1, 1).to(device)
+        p_tensor = (p * torch.ones(num_pts, device=device)).reshape(-1, 1).to(device)
         cdf_in = torch.cat([X, p_tensor], dim=1)
 
         with torch.no_grad():
@@ -369,9 +369,9 @@ def get_obs_props(model, X, y, exp_props, device, type,  # all done
             if not (float(upper_p - lower_p) - float(p) < 1e-5):
                 import pudb; pudb.set_trace()
 
-            lower_p_tensor = (lower_p * torch.ones(num_pts)).reshape(-1, 1).to(
+            lower_p_tensor = (lower_p * torch.ones(num_pts, device=device)).reshape(-1, 1).to(
                 device)
-            upper_p_tensor = (upper_p * torch.ones(num_pts)).reshape(-1, 1).to(
+            upper_p_tensor = (upper_p * torch.ones(num_pts, device=device)).reshape(-1, 1).to(
                 device)
 
             with torch.no_grad():
@@ -386,7 +386,7 @@ def get_obs_props(model, X, y, exp_props, device, type,  # all done
             obs_props.append(prop.item())
 
     cdf_preds = torch.cat(cdf_preds, dim=1).T  # shape (num_quantiles, num_pts)...most likely (99, num_pts)
-    obs_props = torch.Tensor(obs_props)  # flat tensor of props
+    obs_props = torch.tensor(obs_props, device=device)  # flat tensor of props
 
     return exp_props, obs_props, cdf_preds
 
