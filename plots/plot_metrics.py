@@ -3,6 +3,7 @@ from typing import Any, Dict, Optional
 import numpy as np
 import matplotlib.pyplot as plt
 from .plot_utils import safe_get
+from utils.misc_utils import EceSharpFrontier
 
 def _annotate_bars(ax, bars, fmt="{:.3f}", y_offset=0.0):
     """
@@ -249,7 +250,6 @@ def compare_scoring_rules(data: Dict[str, Any], outpath: Optional[str]=None, sho
         plt.show()
     plt.close(fig)
 
-# EDITED CALIBRATION GRAPH FUNCTION
 def calibration_plot(data: Dict[str, Any], outpath: Optional[str]=None, show: bool=False):
     """
     Plot calibration curves for original and best models.
@@ -358,3 +358,87 @@ def calibration_plot(data: Dict[str, Any], outpath: Optional[str]=None, show: bo
     if show:
         plt.show()
     plt.close(fig2)
+
+def plot_ece_sharpness(data: Dict[str, Any], outpath: Optional[str]=None, show: bool=False):
+    """
+    Scatter plot of best-model ECE vs. Sharpness for original and recalibrated results.
+
+    Layout: 2x2 grid
+    - Row 0: Test before / Test after recalibration
+    - Row 1: Val before / Val after recalibration
+
+    X-axis runs from 0 to data.args.max_ece_thres (falls back to 1.0).
+    Y-axis lower bound is 0; upper bound is max(0.3, observed_max*1.05) so points above 0.3 are allowed.
+    """
+    args = safe_get(data, "args", None)
+    te_ece_best = safe_get(data, "te_ece_list_best", [])
+    te_sharp_best = safe_get(data, "te_sharp_score_list_best", [])
+    recal_ece_best = safe_get(data, "recal_te_ece_list_best", [])
+    recal_sharp_best = safe_get(data, "recal_te_sharp_score_list_best", [])
+    va_ece_best = safe_get(data, "va_ece_list_best", [])
+    va_sharp_best = safe_get(data, "va_sharp_score_list_best", [])
+    recal_va_ece_best = safe_get(data, "recal_va_ece_list_best", [])
+    recal_va_sharp_best = safe_get(data, "recal_va_sharp_score_list_best", [])
+    def get_frontier(ece, sharp):
+        frontier = EceSharpFrontier.from_list(list(zip(ece, sharp))).get_thresholded_frontier(args.min_thres, args.max_thres, args.num_thres).get_entries()
+        ece_frontier = [entry["ece"] for entry in frontier]
+        sharp_frontier = [entry["sharp"] for entry in frontier]
+        return ece_frontier, sharp_frontier
+    import pudb; pudb.set_trace()
+    te_ece_best, te_sharp_best = get_frontier(te_ece_best, te_sharp_best)
+    recal_ece_best, recal_sharp_best = get_frontier(recal_ece_best, recal_sharp_best)
+    va_ece_best, va_sharp_best = get_frontier(va_ece_best, va_sharp_best)
+    recal_va_ece_best, recal_va_sharp_best = get_frontier(recal_va_ece_best, recal_va_sharp_best)
+
+    def to_array(lst):
+        if lst is None:
+            return np.array([], dtype=float)
+        return np.array([np.nan if v is None else v for v in lst], dtype=float)
+
+    x_te_before = to_array(te_ece_best)
+    y_te_before = to_array(te_sharp_best)
+    x_te_after = to_array(recal_ece_best)
+    y_te_after = to_array(recal_sharp_best)
+
+    x_va_before = to_array(va_ece_best)
+    y_va_before = to_array(va_sharp_best)
+    x_va_after = to_array(recal_va_ece_best)
+    y_va_after = to_array(recal_va_sharp_best)
+
+    if (x_te_before.size == 0 and x_te_after.size == 0 and
+        x_va_before.size == 0 and x_va_after.size == 0):
+        print("Warning: no best ECE/sharpness data found (test or val). Skipping plot_ece_sharpness.")
+        return
+
+    fig, axs = plt.subplots(2, 2, figsize=(14, 10), squeeze=False)
+    panels = [
+        (axs[0,0], x_te_before, y_te_before, "Test: Before Recalibration"),
+        (axs[0,1], x_te_after,  y_te_after,  "Test: After Recalibration"),
+        (axs[1,0], x_va_before, y_va_before, "Val: Before Recalibration"),
+        (axs[1,1], x_va_after,  y_va_after,  "Val: After Recalibration"),
+    ]
+
+    for ax, x, y, title in panels:
+        ax.plot(x, y, marker='o', linestyle='-', label='Best models')
+        ax.scatter(x, y, s=40)
+
+        ax.set_title(title)
+        ax.set_xlabel("ECE")
+        ax.set_ylabel("Sharpness")
+        ax.grid(True)
+
+    fig.suptitle("Best-model ECE vs Sharpness (Test and Val)", fontsize=15)
+    fig.tight_layout(rect=[0, 0.03, 1, 0.95])
+
+    if outpath:
+        out_dir = os.path.dirname(outpath)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        base, ext = os.path.splitext(outpath)
+        if ext == "":
+            ext = ".png"
+        target = f"{base}_ece_vs_sharp_test_val{ext}"
+        fig.savefig(target, dpi=150)
+    if show:
+        plt.show()
+    plt.close(fig)

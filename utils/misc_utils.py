@@ -83,7 +83,7 @@ def test_uq(
     q_975 = quantile_preds[:, get_q_idx(exp_props, 0.975)][order]
     sharp_score = torch.mean(q_975 - q_025).item() / y_range
     if output_sharp_score_only:
-        return sharp_score
+        return sharp_score, obs_props
 
     idx_01 = get_q_idx(exp_props, 0.01)
     idx_99 = get_q_idx(exp_props, 0.99)
@@ -297,7 +297,7 @@ def discretize_domain_old(x_arr, min_pts):
     return group_data_idxs
 
 
-class EceSharpTracker:
+class EceSharpFrontier:
     """
     Maintain a capacity-limited list of entries sorted by ece (ascending).
     Each entry is a dict: {'ece': float, 'sharp': float, 'model': object}
@@ -322,7 +322,7 @@ class EceSharpTracker:
                 hi = mid
         return lo
 
-    def insert(self, ece_val, sharp_val, model_obj=None):
+    def insert(self, ece_val, sharp_val, model_obj=None, only_frontier=False):
         """
         Try to insert (ece_val, sharp_val, model_obj).
         Always insert. If the new sharp is worse than the left neighbor,
@@ -335,16 +335,15 @@ class EceSharpTracker:
         left_sharp = (
             self.entries[pos - 1]["sharp"] if pos - 1 >= 0 else None
         )
-        left_model = (
-            self.entries[pos - 1]["model"] if pos - 1 >= 0 else None
-        )
-        # If new sharp is worse than left neighbor, clamp to left and adopt its model
+        # Dominated by left neighbor
         if left_sharp is not None and sharp_val > left_sharp:
-            sharp_val = left_sharp
-            # replace model with left neighbor's model to preserve better model
-            if left_model is not None:
-                model_obj = left_model
+            if not only_frontier:
+                sharp_val = left_sharp
+                model_obj = self.entries[pos - 1]["model"]
+            else:
+                return False
 
+        # Current point not dominated 
         new_entry = {
             "ece": float(ece_val),
             "sharp": float(sharp_val),
@@ -352,13 +351,15 @@ class EceSharpTracker:
         }
         self.entries.insert(pos, new_entry)
 
-        # Level any right entry to the same sharpness if > current
-        for i in range(pos + 1, len(self.entries)):
-            if self.entries[i]["sharp"] > sharp_val:
-                self.entries[i]["sharp"] = sharp_val
-                self.entries[i]["model"] = model_obj
-            else:
-                break
+        # Check if any rightward points are dominated
+        if not only_frontier:
+            for i in range(pos + 1, len(self.entries)):
+                if self.entries[i]["sharp"] > sharp_val:
+                    self.entries[i]["sharp"] = sharp_val
+                    self.entries[i]["model"] = model_obj
+        else:
+            while pos + 1 < len(self.entries) and self.entries[pos + 1]["sharp"] > sharp_val:
+                self.entries.pop(pos + 1)
 
         # Remove if too close to neighbor in both ece and sharp
         epsilon = 1e-6
@@ -375,9 +376,47 @@ class EceSharpTracker:
                 remove = True
         if remove:
             self.entries.pop(pos)
-            return None
+            return False
 
-        return self.entries[pos]
+        return True
+    
+    def get_thresholded_frontier(self, min_thres=0.01, max_thres=0.15, num_thres=100):
+        """
+        Get a list of (ece_thres, best_sharp) where ece_thres is uniformly spaced between min_thres and max_thres,
+            and best_sharp is the lowest sharp value among the entries within that threshold.
+        """
+        if min_thres is None:
+            min_thres = self.entries[0]["ece"] if self.entries else 0
+        if max_thres is None:
+            max_thres = self.entries[-1]["ece"] if self.entries else 1
+
+        ece_thres = np.linspace(min_thres, max_thres, num_thres)
+        best_ece = []
+        best_sharp = []
+        best_model = []
+
+        for thres in ece_thres:
+            # Find the best sharp value for this threshold
+            valid_entries = [entry for entry in self.entries if entry["ece"] <= thres]
+            if valid_entries:
+                best_ece.append(thres)
+                best_sharp.append(min(entry["sharp"] for entry in valid_entries))
+                best_model.append(valid_entries[np.argmin([entry["sharp"] for entry in valid_entries])]["model"])
+
+        result_frontier = EceSharpFrontier()
+        result_frontier.entries = [{"ece": float(ece), "sharp": sharp, "model": model} for ece, sharp, model in zip(best_ece, best_sharp, best_model)]
+        return result_frontier
+
+    @classmethod
+    def from_list(cls, entry_list, only_frontier=False):
+        frontier = cls()
+        if len(entry_list[0]) == 3:
+            for ece, sharp, model in entry_list:
+                frontier.insert(ece, sharp, model, only_frontier=only_frontier)
+        if len(entry_list[0]) == 2:
+            for ece, sharp in entry_list:
+                frontier.insert(ece, sharp, model_obj=None, only_frontier=only_frontier)
+        return frontier
 
     def get_entries(self):
         return list(self.entries)
