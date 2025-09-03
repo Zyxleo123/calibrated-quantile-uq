@@ -41,20 +41,6 @@ def plot_training_stats(data: Dict[str, Any], outpath: Optional[str]=None, show:
     other_keys = ["va_bag_nll_list", "va_crps_list", "va_mpiw_list", "va_interval_list", "va_check_list"]
     others = {k: safe_get(data, k) for k in other_keys}
 
-    # Prepare outpaths if provided (base + suffix)
-    main_out = None
-    others_out = None
-    if outpath:
-        base, ext = os.path.splitext(outpath)
-        if ext == "":
-            ext = ".png"
-        main_out = f"{base}_main{ext}"
-        others_out = f"{base}_others{ext}"
-        # ensure dir exists
-        main_dir = os.path.dirname(main_out)
-        if main_dir:
-            os.makedirs(main_dir, exist_ok=True)
-
     # Main figure: loss, ece, sharpness
     fig_main, axs_main = plt.subplots(1, 3, figsize=(15, 4))
     ax_loss = axs_main[0]
@@ -82,43 +68,19 @@ def plot_training_stats(data: Dict[str, Any], outpath: Optional[str]=None, show:
     ax_sharp.grid(True)
 
     fig_main.tight_layout()
-    if main_out:
-        fig_main.savefig(main_out, dpi=150)
+    if outpath:
+        out_dir = os.path.dirname(outpath)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        base, ext = os.path.splitext(outpath)
+        if ext == "":
+            ext = ".png"
+        target = base + ext
+        fig_main.savefig(target, dpi=150)
     if show:
         plt.show()
     plt.close(fig_main)
 
-    # Other metrics: create a separate figure with one subplot per present metric
-    present = [(k, v) for k, v in others.items() if v is not None]
-    if not present:
-        return
-
-    n = len(present)
-    cols = min(3, n)
-    rows = int(np.ceil(n / cols))
-    fig_o, axs_o = plt.subplots(rows, cols, figsize=(5*cols, 3*rows), squeeze=False)
-    for i, (k, v) in enumerate(present):
-        r = i // cols
-        c = i % cols
-        ax = axs_o[r][c]
-        # plot the list
-        ax.plot(v, marker='o', linestyle='-')
-        ax.set_title(k.replace("va_", "").replace("_list", ""))
-        ax.grid(True)
-    # hide any unused axes
-    for j in range(n, rows*cols):
-        r = j // cols
-        c = j % cols
-        axs_o[r][c].set_visible(False)
-
-    fig_o.tight_layout()
-    if others_out:
-        fig_o.savefig(others_out, dpi=150)
-    if show:
-        plt.show()
-    plt.close(fig_o)
-
-# EDITED BAR GRAPH FUNCTIONS
 def compare_ece_sharpness(data: Dict[str, Any], outpath: Optional[str]=None, show: bool=False):
     """
     Compare testing ECE and sharpness between original and best models (trained with different ECE thresholds).
@@ -126,10 +88,7 @@ def compare_ece_sharpness(data: Dict[str, Any], outpath: Optional[str]=None, sho
     - Row 1: Before Recalibration (ECE, Sharpness)
     - Row 2: After Recalibration (ECE, Sharpness)
     """
-    thresholds = safe_get(data, "thresholds")
-    if thresholds is None:
-        print("Warning: 'thresholds' key not found. Skipping compare_ece_sharpness plot.")
-        return
+    thresholds = safe_get(data, "te_ece_list_best")
 
     labels = ["Original"] + [f"Best@{t:.3f}" for t in thresholds]
     x = np.arange(len(labels))
@@ -182,8 +141,13 @@ def compare_ece_sharpness(data: Dict[str, Any], outpath: Optional[str]=None, sho
 
     if outpath:
         out_dir = os.path.dirname(outpath)
-        if out_dir: os.makedirs(out_dir, exist_ok=True)
-        fig.savefig(outpath, dpi=150)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        base, ext = os.path.splitext(outpath)
+        if ext == "":
+            ext = ".png"
+        target = base + ext
+        fig.savefig(target, dpi=150)
     if show:
         plt.show()
     plt.close(fig)
@@ -193,10 +157,7 @@ def compare_scoring_rules(data: Dict[str, Any], outpath: Optional[str]=None, sho
     Compare various scoring rules on the test set for original vs. best models.
     Plots are arranged in two rows: before and after recalibration.
     """
-    thresholds = safe_get(data, "thresholds")
-    if thresholds is None:
-        print("Warning: 'thresholds' key not found. Skipping compare_scoring_rules plot.")
-        return
+    thresholds = safe_get(data, "te_ece_list_best")
 
     metrics = ["bag_nll", "crps", "mpiw", "interval", "check", "cali_score"]
     labels = ["Original"] + [f"Best@{t:.3f}" for t in thresholds]
@@ -244,8 +205,13 @@ def compare_scoring_rules(data: Dict[str, Any], outpath: Optional[str]=None, sho
 
     if outpath:
         out_dir = os.path.dirname(outpath)
-        if out_dir: os.makedirs(out_dir, exist_ok=True)
-        fig.savefig(outpath, dpi=150)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        base, ext = os.path.splitext(outpath)
+        if ext == "":
+            ext = ".png"
+        target = base + ext
+        fig.savefig(target, dpi=150)
     if show:
         plt.show()
     plt.close(fig)
@@ -271,48 +237,7 @@ def calibration_plot(data: Dict[str, Any], outpath: Optional[str]=None, show: bo
     best_obs_props_list = safe_get(data, "te_obs_props_list_best", [])
     recal_best_obs_props_list = safe_get(data, "recal_te_obs_props_list_best", [])
 
-    # Prepare outpaths for the two approaches
-    all_in_one_out = None
-    pairwise_out = None
-    if outpath:
-        base, ext = os.path.splitext(outpath)
-        if not ext: ext = ".png"
-        out_dir = os.path.dirname(base)
-        if out_dir: os.makedirs(out_dir, exist_ok=True)
-        all_in_one_out = f"{base}_all_in_one{ext}"
-        pairwise_out = f"{base}_pairwise{ext}"
 
-    # --- Approach 1: All curves on one plot ---
-    fig1, ax1 = plt.subplots(figsize=(10, 8))
-    ax1.plot([0, 1], [0, 1], 'k--', label='Ideal')
-
-    if orig_exp_props is not None and orig_obs_props is not None:
-        ax1.plot(orig_exp_props, orig_obs_props, marker='o', linestyle='-', label="Original")
-    if orig_exp_props is not None and recal_orig_obs_props is not None:
-        ax1.plot(orig_exp_props, recal_orig_obs_props, marker='x', linestyle='--', label="Recal Original")
-
-    for i, t in enumerate(thresholds):
-        if i < len(best_exp_props_list) and best_exp_props_list[i] is not None:
-            q_preds_best = best_exp_props_list[i]
-            if i < len(best_obs_props_list) and best_obs_props_list[i] is not None:
-                ax1.plot(q_preds_best, best_obs_props_list[i], marker='.', linestyle='-', label=f"Best@{t:.3f}")
-            if i < len(recal_best_obs_props_list) and recal_best_obs_props_list[i] is not None:
-                ax1.plot(q_preds_best, recal_best_obs_props_list[i], marker='.', linestyle='--', label=f"Recal Best@{t:.3f}")
-
-    ax1.set_xlabel("Expected proportion (Quantile level)")
-    ax1.set_ylabel("Observed proportion")
-    ax1.set_title("Calibration Plot: All Models")
-    ax1.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    ax1.grid(True)
-    fig1.tight_layout(rect=[0, 0, 0.75, 1])
-
-    if all_in_one_out:
-        fig1.savefig(all_in_one_out, dpi=150)
-    if show:
-        plt.show()
-    plt.close(fig1)
-
-    # --- Approach 2: Pairwise comparison plots in subplots ---
     valid_indices = [i for i, qp in enumerate(best_exp_props_list) if qp is not None and i < len(thresholds)]
     if not valid_indices:
         return
@@ -320,11 +245,11 @@ def calibration_plot(data: Dict[str, Any], outpath: Optional[str]=None, show: bo
     n_plots = len(valid_indices)
     cols = min(3, n_plots)
     rows = int(np.ceil(n_plots / cols))
-    fig2, axs2 = plt.subplots(rows, cols, figsize=(6 * cols, 5 * rows), squeeze=False, sharex=True, sharey=True)
-    axs2 = axs2.flatten()
+    fig, axs = plt.subplots(rows, cols, figsize=(6 * cols, 5 * rows), squeeze=False, sharex=True, sharey=True)
+    axs = axs.flatten()
 
     for plot_idx, model_idx in enumerate(valid_indices):
-        ax = axs2[plot_idx]
+        ax = axs[plot_idx]
         t = thresholds[model_idx]
         ax.plot([0, 1], [0, 1], 'k--', label='Ideal')
 
@@ -347,17 +272,25 @@ def calibration_plot(data: Dict[str, Any], outpath: Optional[str]=None, show: bo
         if plot_idx % cols == 0:
             ax.set_ylabel("Observed proportion")
 
-    for i in range(n_plots, len(axs2)):
-        axs2[i].set_visible(False)
+    for i in range(n_plots, len(axs)):
+        axs[i].set_visible(False)
 
-    fig2.suptitle("Calibration Plot: Pairwise Comparisons with Original", fontsize=16)
-    fig2.tight_layout(rect=[0, 0.03, 1, 0.95])
+    fig.suptitle("Calibration Plot: Pairwise Comparisons with Original", fontsize=16)
+    fig.tight_layout(rect=[0, 0.03, 1, 0.95])
 
-    if pairwise_out:
-        fig2.savefig(pairwise_out, dpi=150)
+    
+    if outpath:
+        out_dir = os.path.dirname(outpath)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        base, ext = os.path.splitext(outpath)
+        if ext == "":
+            ext = ".png"
+        target = base + ext
+        fig.savefig(target, dpi=150)
     if show:
         plt.show()
-    plt.close(fig2)
+    plt.close(fig)
 
 def plot_ece_sharpness(data: Dict[str, Any], outpath: Optional[str]=None, show: bool=False):
     """
@@ -370,7 +303,6 @@ def plot_ece_sharpness(data: Dict[str, Any], outpath: Optional[str]=None, show: 
     X-axis runs from 0 to data.args.max_ece_thres (falls back to 1.0).
     Y-axis lower bound is 0; upper bound is max(0.3, observed_max*1.05) so points above 0.3 are allowed.
     """
-    args = safe_get(data, "args", None)
     te_ece_best = safe_get(data, "te_ece_list_best", [])
     te_sharp_best = safe_get(data, "te_sharp_score_list_best", [])
     recal_ece_best = safe_get(data, "recal_te_ece_list_best", [])
@@ -379,16 +311,6 @@ def plot_ece_sharpness(data: Dict[str, Any], outpath: Optional[str]=None, show: 
     va_sharp_best = safe_get(data, "va_sharp_score_list_best", [])
     recal_va_ece_best = safe_get(data, "recal_va_ece_list_best", [])
     recal_va_sharp_best = safe_get(data, "recal_va_sharp_score_list_best", [])
-    def get_frontier(ece, sharp):
-        frontier = EceSharpFrontier.from_list(list(zip(ece, sharp))).get_thresholded_frontier(args.min_thres, args.max_thres, args.num_thres).get_entries()
-        ece_frontier = [entry["ece"] for entry in frontier]
-        sharp_frontier = [entry["sharp"] for entry in frontier]
-        return ece_frontier, sharp_frontier
-    import pudb; pudb.set_trace()
-    te_ece_best, te_sharp_best = get_frontier(te_ece_best, te_sharp_best)
-    recal_ece_best, recal_sharp_best = get_frontier(recal_ece_best, recal_sharp_best)
-    va_ece_best, va_sharp_best = get_frontier(va_ece_best, va_sharp_best)
-    recal_va_ece_best, recal_va_sharp_best = get_frontier(recal_va_ece_best, recal_va_sharp_best)
 
     def to_array(lst):
         if lst is None:
@@ -404,11 +326,6 @@ def plot_ece_sharpness(data: Dict[str, Any], outpath: Optional[str]=None, show: 
     y_va_before = to_array(va_sharp_best)
     x_va_after = to_array(recal_va_ece_best)
     y_va_after = to_array(recal_va_sharp_best)
-
-    if (x_te_before.size == 0 and x_te_after.size == 0 and
-        x_va_before.size == 0 and x_va_after.size == 0):
-        print("Warning: no best ECE/sharpness data found (test or val). Skipping plot_ece_sharpness.")
-        return
 
     fig, axs = plt.subplots(2, 2, figsize=(14, 10), squeeze=False)
     panels = [
@@ -437,7 +354,7 @@ def plot_ece_sharpness(data: Dict[str, Any], outpath: Optional[str]=None, show: 
         base, ext = os.path.splitext(outpath)
         if ext == "":
             ext = ".png"
-        target = f"{base}_ece_vs_sharp_test_val{ext}"
+        target = base + ext
         fig.savefig(target, dpi=150)
     if show:
         plt.show()
