@@ -16,6 +16,7 @@ from utils.misc_utils import (
     discretize_domain,
     gather_loss_per_q,
     EceSharpFrontier,
+    get_frontier
 )
 from recal import iso_recal
 from utils.q_model_ens import QModelEns
@@ -262,14 +263,18 @@ if __name__ == "__main__":
 
     # Save file name
     if "penalty" not in args.loss:
-        save_file_name = "{}/{}_loss{}_ens{}_boot{}_seed{}_thres{}.pkl".format(
+        save_file_name = "{}/{}_loss{}_ens{}_boot{}_res{}_ln{}_bn{}_dr{}_lr{}_bs{}.pkl".format(
             args.save_dir,
             args.data,
             args.loss,
             args.num_ens,
             args.boot,
-            args.seed,
-            args.max_thres
+            args.residual,
+            args.layer_norm,
+            args.batch_norm,
+            args.dropout,
+            args.lr,
+            args.bs
         )
     else:
         # penalizing sharpness
@@ -672,7 +677,6 @@ if __name__ == "__main__":
             )
             current_metrics_tmp['recal_te_ece_best'] = average_calibration(best_model_ens, x_te, y_te, args=Namespace(exp_props=recal_exp_props_best_tmp, device=testing_device, metric="cal_q", recal_model=recal_model_best_tmp, recal_type="sklearn"))
         all_metrics_best.append(current_metrics_tmp)
-    thresholds = [entry['ece'] for entry in thresholded_frontier]
 
     # Unpack metrics from the list of dictionaries into lists of metrics
     def dictlist_to_listdict(metrics_list, key):
@@ -691,6 +695,11 @@ if __name__ == "__main__":
     for list_name in best_model_metric_keys:
         locals()[list_name] = dictlist_to_listdict(all_metrics_best, list_name.replace('_list_best', '_best'))
 
+    te_ece_list_best, te_sharp_score_list_best = get_frontier(ece=te_ece_list_best, sharp=te_sharp_score_list_best, min_thres=args.min_thres, max_thres=args.max_thres, num_thres=args.num_thres)
+    recal_te_ece_list_best, recal_te_sharp_score_list_best = get_frontier(ece=recal_te_ece_list_best, sharp=recal_te_sharp_score_list_best, min_thres=args.min_thres, max_thres=args.max_thres, num_thres=args.num_thres)
+    va_ece_list_best, va_sharp_score_list_best = get_frontier(ece=va_ece_list_best, sharp=va_sharp_score_list_best, min_thres=args.min_thres, max_thres=args.max_thres, num_thres=args.num_thres)
+    recal_va_ece_list_best, recal_va_sharp_score_list_best = get_frontier(ece=recal_va_ece_list_best, sharp=recal_va_sharp_score_list_best, min_thres=args.min_thres, max_thres=args.max_thres, num_thres=args.num_thres)
+    thresholds = te_ece_list_best
 
     save_var_names = [
         "args", "thresholds",

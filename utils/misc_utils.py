@@ -424,6 +424,11 @@ class EceSharpFrontier:
     def clear(self):
         self.entries = []
 
+def get_frontier(ece, sharp, min_thres, max_thres, num_thres):
+    frontier = EceSharpFrontier.from_list(list(zip(ece, sharp))).get_thresholded_frontier(min_thres, max_thres, num_thres).get_entries()
+    ece_frontier = [entry["ece"] for entry in frontier]
+    sharp_frontier = [entry["sharp"] for entry in frontier]
+    return ece_frontier, sharp_frontier
 
 if __name__ == "__main__":
     temp_x = np.random.uniform(0, 100, size=[100, 2])
