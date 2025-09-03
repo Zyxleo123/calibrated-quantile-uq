@@ -5,51 +5,20 @@ import glob
 import argparse
 import subprocess
 from typing import List
+from collections import deque
+from script_utils import dict_to_cli_args, pick_free_gpu, get_save_file_name
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(REPO_ROOT)
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Run main.py across datasets and thresholds and generate plots.")
-    parser.add_argument("--num_thresholds", "-n", type=int, default=10,
-                        help="Number of thresholds to run (uniformly between 0 (excluded) and 0.01). Default 10.")
-    parser.add_argument("--min_threshold", "-min", type=float, default=0.0,
-                        help="Minimum threshold value (default: 0.0).")
-    parser.add_argument("--max_threshold", "-max", type=float, default=0.2,
-                        help="Maximum threshold value (default: 0.2).")
-    parser.add_argument("--datasets", "-d", type=str, default="",
-                        help="Comma-separated list of datasets to run. If omitted, runs all UCI datasets.")
-    parser.add_argument("--save_dir", type=str, default="results",
-                        help="Directory passed to main.py via --save_dir and where pickles are saved. Default 'results'.")
-    parser.add_argument("--python_cmd", type=str, default=sys.executable,
-                        help="Python executable to call main.py with (default: current interpreter).")
-    parser.add_argument("--main_path", type=str, default=os.path.join(REPO_ROOT, "main.py"),
-                        help="Path to main.py (default: ./main.py in repo root).")
-    args, unknown = parser.parse_known_args()
-    return args, unknown
-
-def find_new_pickles(before_set, results_dir):
-    all_now = set(glob.glob(os.path.join(results_dir, "*.pkl")))
-    return list(all_now - before_set)
-
-def run_main_for(dataset: str, min_thres: float, max_thres: float, args, extra_args: List[str]):
-    cmd = [
-        args.python_cmd,
-        args.main_path,
-        "--min_thres", f"{min_thres:.8f}",
-        "--max_thres", f"{max_thres:.8f}",
-        "--data", dataset,
-        "--save_dir", args.save_dir
-    ]
-    # append any extra/unknown args provided to this script so they are forwarded to main.py
-    if extra_args:
-        cmd += extra_args
-    print("Running:", " ".join(cmd))
-    subprocess.run(cmd, check=True)
+def run_main(inputs, gpu_id):
+    cmd = ["python", "main.py"] + dict_to_cli_args(inputs)
+    print(cmd)
+    proc = subprocess.Popen(cmd)
+    return proc
 
 def generate_plots_for_pickle(pkl_path: str, out_parent_dir: str):
-    # import plotting helpers (do local import so script can run even if plotting deps missing until needed)
-    from plots.plot_metrics import plot_training_stats, compare_ece_sharpness, compare_scoring_rules, calibration_plot
+    from plots.plot_metrics import plot_training_stats, compare_ece_sharpness, compare_scoring_rules, calibration_plot, plot_ece_sharpness
     from plots.plot_utils import load_pickle
 
     base = os.path.basename(pkl_path)
@@ -60,46 +29,111 @@ def generate_plots_for_pickle(pkl_path: str, out_parent_dir: str):
     print(f"Generating plots for {pkl_path} -> {outdir}")
     data = load_pickle(pkl_path)
     plot_training_stats(data, outpath=os.path.join(outdir, "training_stats.png"))
-    compare_ece_sharpness(data, outpath=os.path.join(outdir, "ece_sharpness.png"))
-    compare_scoring_rules(data, outpath=os.path.join(outdir, "scoring_rules.png"))
+    compare_ece_sharpness(data, outpath=os.path.join(outdir, "ece_sharpness_comparison.png"))
     calibration_plot(data, outpath=os.path.join(outdir, "calibration_plot.png"))
+    plot_ece_sharpness(data, outpath=os.path.join(outdir, "ece_sharpness_curve.png"))
+
+default_inputs = {
+    "save_dir": "/home/scratch/yixiz/results",
+    "min_thres": 0.01,
+    "max_thres": 0.15,
+    "num_thres": 100,
+    "seed": 0,
+    "wait": 100000,
+}
+# datasets = ["boston", "concrete", "energy", "kin8nm", "naval", "power", "protein", "wine", "yacht"]
+# loss_fns = ["batch_qr", "batch_cal", "batch_int"]
+# num_ens_list = [1, 2, 3]
+boots = [0]
+residuals = [0]
+layer_norms = [0]
+batch_norms = [0]
+dropouts = [0.0]
+datasets = ["kin8nm", "boston", "wine"]
+# datasets = ["boston"]
+loss_fns = ["batch_qr", "batch_int", "batch_cal"]
+num_ens_list = [1]
+# learning_rates = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5]
+# batch_sizes = [16, 64, 256]
+learning_rates = [1e-3]
+batch_sizes = [64]
+
+MAX_JOBS = 15
+
+# Close all subprocesses if the script is interrupted
+
+job_status = {}
+import signal
+def signal_handler(sig, frame):
+    print("Interrupt received, closing all subprocesses...")
+    for proc in job_status.values():
+        proc.terminate()
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
 
 def main():
-    args, extra_args = parse_args()
+    from itertools import product
 
-    # default datasets = files under data/UCI_Datasets without .txt suffix if user didn't provide explicit list
-    if args.datasets:
-        datasets = [d.strip() for d in args.datasets.split(",") if d.strip()]
-    else:
-        # datasets = ["boston", "concrete", "energy", "kin8nm", "naval", "power", "protein", "wine", "yacht"]
-        datasets = ["boston", "concrete", "energy", "wine", "yacht"]
-
-    results_dir = args.save_dir
-    os.makedirs(results_dir, exist_ok=True)
-
-    for dataset in datasets:
-        # snapshot existing pickles
-        before = set(glob.glob(os.path.join(results_dir, "*.pkl")))
-        try:
-            run_main_for(dataset, args.min_threshold, args.max_threshold, args, extra_args)
-        except subprocess.CalledProcessError as e:
-            print(f"main.py failed for dataset={dataset}, min_thres={args.min_threshold}, max_thres={args.max_threshold}: {e}")
-            continue
-
-        # wait briefly to allow file system to settle
-        time.sleep(5.0)
-        new_pkls = find_new_pickles(before, results_dir)
-        if not new_pkls:
-            print(f"No new pickle detected for dataset={dataset}, min_thres={args.min_threshold}, max_thres={args.max_threshold}. Check main.py output.")
-            continue
-
-        for pkl in sorted(new_pkls):
+    # Use a dict mapping expected pickle path -> subprocess.Popen
+    job_pool = deque(product(num_ens_list, datasets, loss_fns, boots, residuals, layer_norms, batch_norms, dropouts, learning_rates, batch_sizes))
+    while job_pool or job_status:
+        if job_pool and len(job_status) < MAX_JOBS:
+            num_ens, dataset, loss, boot, residual, ln, bn, dr, lr, bs = job_pool.popleft()
+            if ln == 1 and bn == 1 or boot == 1 and num_ens == 1:
+                continue
+            free_gpu = pick_free_gpu(min_free_mb=1500)
+            while free_gpu is None:
+                # poll every 10 seconds for available GPU
+                print("No GPU available with sufficient free memory. Waiting 10 seconds...")
+                time.sleep(10)
+                free_gpu = pick_free_gpu(min_free_mb=1500)
             try:
-                generate_plots_for_pickle(pkl, results_dir)
+                inputs = {
+                    "data": dataset,
+                    "loss": loss,
+                    "num_ens": num_ens,
+                    "boot": boot,
+                    "residual": residual,
+                    "layer_norm": ln,
+                    "batch_norm": bn,
+                    "dropout": dr,
+                    "lr": lr,
+                    "bs": bs,
+                    "gpu": free_gpu
+                }
+                inputs.update(default_inputs)
+                pkl_path = get_save_file_name(inputs)
+                # Launch process asynchronously and store in dict
+                proc = run_main(inputs, free_gpu)
+                job_status[pkl_path] = proc
+                print(f"Started process for {inputs} at GPU {free_gpu}")
             except Exception as e:
-                print(f"Failed to generate plots for {pkl}: {e}")
-
-    print("All runs and plotting complete.")
+                # If launching fails, do not add to pending and log error
+                print(f"Failed to launch main.py for {inputs}: {e}")
+                continue
+        if job_status:
+            for pkl_file, proc in list(job_status.items()):
+                ret = proc.poll()
+                if ret is None:
+                    # still running
+                    continue
+                # process finished; check return code
+                if ret == 0:
+                    if os.path.exists(pkl_file):
+                        print(f"Process succeeded, generating plots for {pkl_file}")
+                        try:
+                            generate_plots_for_pickle(pkl_file, default_inputs["save_dir"])
+                        except Exception as e:
+                            print(f"Plot generation failed for {pkl_file}: {e}")
+                    else:
+                        print(f"Process finished with exit 0 but pickle not found: {pkl_file}. Removing from pending.")
+                    # In all success cases, remove from pending
+                    job_status.pop(pkl_file, None)
+                else:
+                    # process failed; put it back
+                    job_pool.append((num_ens, dataset, loss, boot, residual, ln, bn, dr, lr, bs))
+        time.sleep(10)
 
 if __name__ == "__main__":
     main()
