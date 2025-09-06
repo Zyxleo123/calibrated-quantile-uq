@@ -1,6 +1,8 @@
 import subprocess
 from typing import Dict, List, Optional
-
+from plots.plot_metrics import plot_training_stats, compare_ece_sharpness, calibration_plot, plot_ece_sharpness, overlap_ece_sharpness
+from plots.plot_utils import load_pickle
+import os
 
 def dict_to_cli_args(kwargs: Dict) -> List[str]:
 	"""
@@ -80,26 +82,37 @@ def pick_free_gpu(min_free_mb: int = 1000) -> Optional[int]:
 	avail = find_available_gpus(min_free_mb=min_free_mb)
 	return avail[0] if avail else None
 
-def get_save_file_name(args) -> str:
-    args["boot"] = bool(args["boot"])
-    args["residual"] = bool(args["residual"])
-    args["batch_norm"] = bool(args["batch_norm"])
-    args["layer_norm"] = bool(args["layer_norm"])
-    print(args)
-    save_file_name = "{}/{}_loss{}_ens{}_boot{}_res{}_ln{}_bn{}_dr{}_lr{}_bs{}.pkl".format(
-        args["save_dir"],
-        args["data"],
-        args["loss"],
-        args["num_ens"],
-        args["boot"],
-        args["seed"],
-        args["min_thres"],
-        args["max_thres"],
-        args["residual"],
-        args["layer_norm"],
-        args["batch_norm"],
-        args["dropout"],
-		args["lr"],
-		args["bs"]
-    )
-    return save_file_name
+def is_one_hot_job(inputs, default_value_dict) -> bool:
+	"""
+	Return True if the job configuration should be skipped based on constraints.
+	"""
+	num_hot = 0
+	for key, val in inputs.items():
+		if key in default_value_dict and val != default_value_dict[key]:
+			num_hot += 1
+	if num_hot > 1:
+		return True
+	return False
+
+def generate_plots_for_pickle(pkl_path: str, out_parent_dir: str):
+    base = os.path.basename(pkl_path)
+    name = base[:-4] if base.lower().endswith(".pkl") else base
+    outdir = os.path.join(out_parent_dir, name)
+    os.makedirs(outdir, exist_ok=True)
+
+    data = load_pickle(pkl_path)
+    plot_training_stats(data, outpath=os.path.join(outdir, "training_stats.png"))
+    compare_ece_sharpness(data, outpath=os.path.join(outdir, "ece_sharpness_comparison.png"))
+    calibration_plot(data, outpath=os.path.join(outdir, "calibration_plot.png"))
+    plot_ece_sharpness(data, outpath=os.path.join(outdir, "ece_sharpness_curve.png"))
+
+def generate_overlap_plot(current_pkl_path: str, current_baseline_name: str, baseline_names: List[str], out_parent_dir: str):
+	base = os.path.basename(current_pkl_path)
+	name = base[:-4] if base.lower().endswith(".pkl") else base
+	outdir = os.path.join(out_parent_dir, name)
+	os.makedirs(outdir, exist_ok=True)
+
+	pkl_paths = [current_pkl_path.replace(current_baseline_name, bname) for bname in baseline_names]
+	datas = [load_pickle(p) for p in pkl_paths]
+
+	overlap_ece_sharpness(datas, baseline_names, outpath=os.path.join(outdir, "overlap_ece_sharpness.png"))

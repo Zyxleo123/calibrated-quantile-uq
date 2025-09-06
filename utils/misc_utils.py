@@ -13,6 +13,8 @@ from argparse import Namespace
 import sys
 from bisect import bisect_left
 
+from copy import deepcopy
+
 sys.path.append("/home/master/rs/uq/toolkit/uq_toolkit")
 from quantile_models import (
     crps_score,
@@ -362,7 +364,7 @@ class EceSharpFrontier:
                 self.entries.pop(pos + 1)
 
         # Remove if too close to neighbor in both ece and sharp
-        epsilon = 1e-6
+        epsilon = 1e-3
         remove = False
         # Check left neighbor
         if pos - 1 >= 0:
@@ -429,6 +431,31 @@ def get_frontier(ece, sharp, min_thres, max_thres, num_thres):
     ece_frontier = [entry["ece"] for entry in frontier]
     sharp_frontier = [entry["sharp"] for entry in frontier]
     return ece_frontier, sharp_frontier
+
+def get_save_file_name(args) -> str:
+    args = deepcopy(args)
+    if type(args) is Namespace:
+        args = vars(args)
+    args["boot"] = bool(args["boot"])
+    args["residual"] = bool(args["residual"])
+    args["batch_norm"] = bool(args["batch_norm"])
+    args["layer_norm"] = bool(args["layer_norm"])
+    save_file_name = "{}/{}_loss{}_ens{}_boot{}_res{}_ln{}_bn{}_dr{}_lr{}_bs{}_nl{}_hs{}.pkl".format(
+        args["save_dir"],
+        args["data"],
+        args["loss"],
+        args["num_ens"],
+        args["boot"],
+        args["residual"],
+        args["layer_norm"],
+        args["batch_norm"],
+        args["dropout"],
+		args["lr"],
+		args["bs"],
+        args["nl"],
+        args["hs"],
+    )
+    return save_file_name
 
 if __name__ == "__main__":
     temp_x = np.random.uniform(0, 100, size=[100, 2])
