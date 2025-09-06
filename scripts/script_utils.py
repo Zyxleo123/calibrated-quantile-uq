@@ -107,14 +107,11 @@ def generate_plots_for_pickle(pkl_path: str, out_parent_dir: str):
     plot_ece_sharpness(data, outpath=os.path.join(outdir, "ece_sharpness_curve.png"))
 
 def generate_overlap_plot(current_pkl_path: str, current_baseline_name: str, baseline_names: List[str], out_parent_dir: str):
-	base = os.path.basename(current_pkl_path)
-	name = base[:-4] if base.lower().endswith(".pkl") else base
-	outdir = os.path.join(out_parent_dir, name)
-	os.makedirs(outdir, exist_ok=True)
+	os.makedirs(out_parent_dir, exist_ok=True)
 
 	pkl_paths = [current_pkl_path.replace(current_baseline_name, bname) for bname in baseline_names]
 	if not all(os.path.exists(p) for p in pkl_paths):
 		return False
 	datas = [load_pickle(p) for p in pkl_paths]
-	overlap_ece_sharpness(datas, baseline_names, outpath=os.path.join(outdir, "overlap_ece_sharpness.png"))
+	overlap_ece_sharpness(datas, baseline_names, outpath=os.path.join(out_parent_dir, "overlap_ece_sharpness.png"))
 	return True

@@ -484,3 +484,9 @@ if __name__ == "__main__":
     # for i in range(num_bins):
     #     plt.plot(temp_x[idxs[i], 0], temp_x[idxs[i], 1], 'o')
     # plt.show()
+
+def compute_marginal_sharpness(y, y_range):
+    """
+    Compute marginal sharpness of the target variable
+    """
+    return (np.quantile(y, 0.975) - np.quantile(y, 0.025)) / y_range

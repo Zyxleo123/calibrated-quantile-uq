@@ -14,7 +14,8 @@ from utils.misc_utils import (
     set_seeds,
     discretize_domain,
     EceSharpFrontier,
-    get_save_file_name
+    get_save_file_name,
+    compute_marginal_sharpness
 )
 from recal import iso_recal
 from utils.q_model_ens import QModelEns
@@ -622,8 +623,8 @@ if __name__ == "__main__":
     all_metrics_controlled = []
     for entry in tqdm.tqdm(thresholded_frontier, desc="Testing controlled models"):
         controlled_model_ens = entry['model']
-
         current_metrics_tmp = {}
+        current_metrics_tmp['model_controlled'] = controlled_model_ens
         controlled_model_ens.use_device(testing_device)
 
         # Test UQ on val with controlled model
@@ -669,6 +670,10 @@ if __name__ == "__main__":
                 controlled_model_ens, x_te, y_te, args=Namespace(exp_props=recal_exp_props_controlled_tmp, device=testing_device, metric="cal_q", recal_model=recal_model_controlled_tmp, recal_type="sklearn")
             )
         all_metrics_controlled.append(current_metrics_tmp)
+    
+    # Compute marginal sharpness of the target variable
+    va_marginal_sharpness = compute_marginal_sharpness(y_va, y_range)
+    te_marginal_sharpness = compute_marginal_sharpness(y_te, y_range)
 
     # Unpack metrics from the list of dictionaries into lists of metrics
     def dictlist_to_listdict(metrics_list, key):
@@ -676,7 +681,7 @@ if __name__ == "__main__":
     
     # Define keys for unpacking
     controlled_model_metric_keys = [
-        'va_cali_score_controlled', 'va_sharp_score_controlled', 'va_obs_props_controlled', 'va_q_preds_controlled', 'va_bag_nll_controlled', 'va_crps_controlled', 'va_mpiw_controlled', 'va_interval_controlled', 'va_check_controlled', 'va_ece_controlled',
+        'model_controlled', 'va_cali_score_controlled', 'va_sharp_score_controlled', 'va_obs_props_controlled', 'va_q_preds_controlled', 'va_bag_nll_controlled', 'va_crps_controlled', 'va_mpiw_controlled', 'va_interval_controlled', 'va_check_controlled', 'va_ece_controlled',
         'te_cali_score_controlled', 'te_sharp_score_controlled', 'te_obs_props_controlled', 'te_q_preds_controlled', 'te_g_cali_scores_controlled', 'te_scoring_rules_controlled', 'te_bag_nll_controlled', 'te_crps_controlled', 'te_mpiw_controlled', 'te_interval_controlled', 'te_check_controlled', 'te_ece_controlled',
         'recal_model_controlled', 'recal_va_cali_score_controlled', 'recal_va_sharp_score_controlled', 'recal_va_obs_props_controlled', 'recal_va_q_preds_controlled', 'recal_va_g_cali_scores_controlled', 'recal_va_scoring_rules_controlled', 'recal_va_bag_nll_controlled', 'recal_va_crps_controlled', 'recal_va_mpiw_controlled', 'recal_va_interval_controlled', 'recal_va_check_controlled', 'recal_va_ece_controlled',
         'recal_te_cali_score_controlled', 'recal_te_sharp_score_controlled', 'recal_te_obs_props_controlled', 'recal_te_q_preds_controlled', 'recal_te_g_cali_scores_controlled', 'recal_te_scoring_rules_controlled', 'recal_te_bag_nll_controlled', 'recal_te_crps_controlled', 'recal_te_mpiw_controlled', 'recal_te_interval_controlled', 'recal_te_check_controlled', 'recal_te_ece_controlled',
@@ -687,7 +692,7 @@ if __name__ == "__main__":
         locals()[list_name] = dictlist_to_listdict(all_metrics_controlled, list_name.replace('_list_best', '_best'))
 
     save_var_names = [
-        "args", "thresholds",
+        "args", "va_marginal_sharpness", "te_marginal_sharpness",
 
         "tr_loss_list", "va_loss_list", "te_loss_list",
         "va_sharp_list", "va_ece_list", "va_bag_nll_list", "va_crps_list", "va_mpiw_list", "va_interval_list", "va_check_list",

@@ -306,20 +306,24 @@ def plot_ece_sharpness(data: Dict[str, Any], outpath: Optional[str]=None, show: 
     recal_va_ece_controlled = safe_get(data, "recal_va_ece_controlled", [])
     recal_va_sharp_controlled = safe_get(data, "recal_va_sharp_score_controlled", [])
 
+    va_marginal_sharpness = safe_get(data, "va_marginal_sharpness")
+    te_marginal_sharpness = safe_get(data, "te_marginal_sharpness")
     fig, axs = plt.subplots(2, 2, figsize=(14, 10), squeeze=False)
     panels = [
-        (axs[0,0], te_ece_controlled, te_sharp_controlled, "Test: Before Recalibration"),
-        (axs[0,1], recal_ece_controlled, recal_sharp_controlled, "Test: After Recalibration"),
-        (axs[1,0], va_ece_controlled, va_sharp_controlled, "Val: Before Recalibration"),
-        (axs[1,1], recal_va_ece_controlled, recal_va_sharp_controlled, "Val: After Recalibration"),
+        (axs[0,0], te_ece_controlled, te_sharp_controlled, te_marginal_sharpness,"Test: Before Recalibration"),
+        (axs[0,1], recal_ece_controlled, recal_sharp_controlled, te_marginal_sharpness, "Test: After Recalibration"),
+        (axs[1,0], va_ece_controlled, va_sharp_controlled, va_marginal_sharpness, "Val: Before Recalibration"),
+        (axs[1,1], recal_va_ece_controlled, recal_va_sharp_controlled, va_marginal_sharpness, "Val: After Recalibration"),
     ]
 
-    for ax, x, y, title in panels:
+    for ax, x, y, marginal_sharpness, title in panels:
         ax.scatter(x, y, s=40)
+        ax.axhline(marginal_sharpness, color='r', linestyle=':', linewidth=1.5, label='Marginal Sharpness')
         ax.set_title(title)
         ax.set_xlabel("ECE")
         ax.set_ylabel("Sharpness")
         ax.grid(True)
+        ax.legend()
     fig.suptitle("Best-model ECE vs Sharpness (Test and Val)", fontsize=15)
     fig.tight_layout(rect=[0, 0.03, 1, 0.95])
 
@@ -352,6 +356,9 @@ def overlap_ece_sharpness(datas: list, names: list, outpath: Optional[str]=None,
         (axs[1,1], "Val: After Recalibration"),
     ]
 
+    va_marginal_sharpness = safe_get(datas[0], "va_marginal_sharpness")
+    te_marginal_sharpness = safe_get(datas[0], "te_marginal_sharpness")
+
     for data, name in zip(datas, names):
         te_ece_controlled = safe_get(data, "te_ece_controlled", [])
         te_sharp_controlled = safe_get(data, "te_sharp_score_controlled", [])
@@ -362,13 +369,14 @@ def overlap_ece_sharpness(datas: list, names: list, outpath: Optional[str]=None,
         recal_va_ece_controlled = safe_get(data, "recal_va_ece_controlled", [])
         recal_va_sharp_controlled = safe_get(data, "recal_va_sharp_score_controlled", [])
         panel_data = [
-            (te_ece_controlled, te_sharp_controlled),
-            (recal_ece_controlled, recal_sharp_controlled),
-            (va_ece_controlled, va_sharp_controlled),
-            (recal_va_ece_controlled, recal_va_sharp_controlled),
+            (te_ece_controlled, te_sharp_controlled, te_marginal_sharpness),
+            (recal_ece_controlled, recal_sharp_controlled, te_marginal_sharpness),
+            (va_ece_controlled, va_sharp_controlled, va_marginal_sharpness),
+            (recal_va_ece_controlled, recal_va_sharp_controlled, va_marginal_sharpness),
         ]
-        for (ax, title), (x, y) in zip(panels, panel_data):
+        for (ax, title), (x, y, marginal_sharpness) in zip(panels, panel_data):
             ax.scatter(x, y, s=40, label=name)
+            ax.axhline(marginal_sharpness, color='r', linestyle=':', linewidth=1.5, label='Marginal Sharpness')
             ax.set_title(title)
             ax.set_xlabel("ECE")
             ax.set_ylabel("Sharpness")
