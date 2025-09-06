@@ -12,11 +12,9 @@ from data.fetch_data import get_uci_data, get_toy_data, get_fusion_data
 from utils.misc_utils import (
     test_uq,
     set_seeds,
-    get_q_idx,
     discretize_domain,
-    gather_loss_per_q,
     EceSharpFrontier,
-    get_frontier
+    get_save_file_name
 )
 from recal import iso_recal
 from utils.q_model_ens import QModelEns
@@ -182,6 +180,9 @@ def parse_args():
         default="./",
         help="dir to save results",
     )
+    parser.add_argument(
+        "--skip_existing", type=int, default=1, help="1 to skip existing results"
+    )
     parser.add_argument("--debug", type=int, default=0, help="1 to debug")
 
     args = parser.parse_args()
@@ -263,19 +264,8 @@ if __name__ == "__main__":
 
     # Save file name
     if "penalty" not in args.loss:
-        save_file_name = "{}/{}_loss{}_ens{}_boot{}_res{}_ln{}_bn{}_dr{}_lr{}_bs{}.pkl".format(
-            args.save_dir,
-            args.data,
-            args.loss,
-            args.num_ens,
-            args.boot,
-            args.residual,
-            args.layer_norm,
-            args.batch_norm,
-            args.dropout,
-            args.lr,
-            args.bs
-        )
+        save_file_name = get_save_file_name(args)
+
     else:
         # penalizing sharpness
         if args.sharp_all is not None and args.sharp_all:
@@ -300,7 +290,7 @@ if __name__ == "__main__":
                 args.seed,
                 args.max_thres
             )
-    if os.path.exists(save_file_name):
+    if os.path.exists(save_file_name) and args.skip_existing:
         print("skipping {}".format(save_file_name))
         sys.exit()
 
@@ -629,77 +619,72 @@ if __name__ == "__main__":
             )
         )
 
-    all_metrics_best = []
-    for entry in tqdm.tqdm(thresholded_frontier, desc="Testing best models"):
-        best_model_ens = entry['model']
+    all_metrics_controlled = []
+    for entry in tqdm.tqdm(thresholded_frontier, desc="Testing controlled models"):
+        controlled_model_ens = entry['model']
 
         current_metrics_tmp = {}
-        best_model_ens.use_device(testing_device)
+        controlled_model_ens.use_device(testing_device)
 
-        # Test UQ on val with best model
-        va_exp_props_best_recal = torch.linspace(-2.0, 3.0, 501, device=testing_device)
-        _, va_obs_props_best_recal = test_uq(
-            best_model_ens, x_va, y_va, va_exp_props_best_recal, y_range, recal_model=None, recal_type=None, output_sharp_score_only=True
-        )
-
-        va_exp_props_best_tmp = torch.linspace(0.01, 0.99, 99, device=testing_device)
-        current_metrics_tmp['va_sharp_score_best'], current_metrics_tmp['va_obs_props_best'] = test_uq(
-            best_model_ens, x_va, y_va, va_exp_props_best_tmp, y_range, recal_model=None, recal_type=None, output_sharp_score_only=True
-        )
-        current_metrics_tmp['va_ece_best'] = average_calibration(
-            best_model_ens, x_va, y_va, args=Namespace(exp_props=va_exp_props_best_tmp, device=testing_device, metric="cal_q")
+        # Test UQ on val with controlled model
+        va_exp_props_controlled_recal = torch.linspace(-2.0, 3.0, 501, device=testing_device)
+        _, va_obs_props_controlled_recal = test_uq(
+            controlled_model_ens, x_va, y_va, va_exp_props_controlled_recal, y_range, recal_model=None, recal_type=None, output_sharp_score_only=True
         )
 
-        # Test UQ on test with best model
-        te_exp_props_best_tmp = torch.linspace(0.01, 0.99, 99, device=testing_device)
-        current_metrics_tmp['te_sharp_score_best'], current_metrics_tmp['te_obs_props_best'] = test_uq(
-            best_model_ens, x_te, y_te, te_exp_props_best_tmp, y_range, recal_model=None, recal_type=None, output_sharp_score_only=True
+        va_exp_props_controlled_tmp = torch.linspace(0.01, 0.99, 99, device=testing_device)
+        current_metrics_tmp['va_sharp_score_controlled'], current_metrics_tmp['va_obs_props_controlled'] = test_uq(
+            controlled_model_ens, x_va, y_va, va_exp_props_controlled_tmp, y_range, recal_model=None, recal_type=None, output_sharp_score_only=True
         )
-        current_metrics_tmp['te_ece_best'] = average_calibration(
-            best_model_ens, x_te, y_te, args=Namespace(exp_props=te_exp_props_best_tmp, device=testing_device, metric="cal_q")
+        current_metrics_tmp['va_ece_controlled'] = average_calibration(
+            controlled_model_ens, x_va, y_va, args=Namespace(exp_props=va_exp_props_controlled_tmp, device=testing_device, metric="cal_q")
         )
 
-        # Recalibration for best model
+        # Test UQ on test with controlled model
+        te_exp_props_controlled_tmp = torch.linspace(0.01, 0.99, 99, device=testing_device)
+        current_metrics_tmp['te_sharp_score_controlled'], current_metrics_tmp['te_obs_props_controlled'] = test_uq(
+            controlled_model_ens, x_te, y_te, te_exp_props_controlled_tmp, y_range, recal_model=None, recal_type=None, output_sharp_score_only=True
+        )
+        current_metrics_tmp['te_ece_controlled'] = average_calibration(
+            controlled_model_ens, x_te, y_te, args=Namespace(exp_props=te_exp_props_controlled_tmp, device=testing_device, metric="cal_q")
+        )
+
+        # Recalibration for controlled model
         if args.recal:
-            recal_model_best_tmp = iso_recal(va_exp_props_best_recal, va_obs_props_best_recal)
-            current_metrics_tmp['recal_model_best'] = recal_model_best_tmp
-            recal_exp_props_best_tmp = torch.linspace(0.01, 0.99, 99, device=testing_device)
+            recal_model_controlled_tmp = iso_recal(va_exp_props_controlled_recal, va_obs_props_controlled_recal)
+            current_metrics_tmp['recal_model_controlled'] = recal_model_controlled_tmp
+            recal_exp_props_controlled_tmp = torch.linspace(0.01, 0.99, 99, device=testing_device)
             # Recal on Validation
-            current_metrics_tmp['recal_va_sharp_score_best'], current_metrics_tmp['recal_va_obs_props_best'] = test_uq(
-                best_model_ens, x_va, y_va, recal_exp_props_best_tmp, y_range, recal_model=recal_model_best_tmp, recal_type="sklearn", output_sharp_score_only=True
+            current_metrics_tmp['recal_va_sharp_score_controlled'], current_metrics_tmp['recal_va_obs_props_controlled'] = test_uq(
+                controlled_model_ens, x_va, y_va, recal_exp_props_controlled_tmp, y_range, recal_model=recal_model_controlled_tmp, recal_type="sklearn", output_sharp_score_only=True
             )
-            current_metrics_tmp['recal_va_ece_best'] = average_calibration(
-                best_model_ens, x_va, y_va, args=Namespace(exp_props=recal_exp_props_best_tmp, device=testing_device, metric="cal_q", recal_model=recal_model_best_tmp, recal_type="sklearn")
+            current_metrics_tmp['recal_va_ece_controlled'] = average_calibration(
+                controlled_model_ens, x_va, y_va, args=Namespace(exp_props=recal_exp_props_controlled_tmp, device=testing_device, metric="cal_q", recal_model=recal_model_controlled_tmp, recal_type="sklearn")
             )
             # Recal on Test
-            current_metrics_tmp['recal_te_sharp_score_best'], current_metrics_tmp['recal_te_obs_props_best'] = test_uq(
-                best_model_ens, x_te, y_te, recal_exp_props_best_tmp, y_range, recal_model=recal_model_best_tmp, recal_type="sklearn", output_sharp_score_only=True 
+            current_metrics_tmp['recal_te_sharp_score_controlled'], current_metrics_tmp['recal_te_obs_props_controlled'] = test_uq(
+                controlled_model_ens, x_te, y_te, recal_exp_props_controlled_tmp, y_range, recal_model=recal_model_controlled_tmp, recal_type="sklearn", output_sharp_score_only=True 
             )
-            current_metrics_tmp['recal_te_ece_best'] = average_calibration(best_model_ens, x_te, y_te, args=Namespace(exp_props=recal_exp_props_best_tmp, device=testing_device, metric="cal_q", recal_model=recal_model_best_tmp, recal_type="sklearn"))
-        all_metrics_best.append(current_metrics_tmp)
+            current_metrics_tmp['recal_te_ece_controlled'] = average_calibration(
+                controlled_model_ens, x_te, y_te, args=Namespace(exp_props=recal_exp_props_controlled_tmp, device=testing_device, metric="cal_q", recal_model=recal_model_controlled_tmp, recal_type="sklearn")
+            )
+        all_metrics_controlled.append(current_metrics_tmp)
 
     # Unpack metrics from the list of dictionaries into lists of metrics
     def dictlist_to_listdict(metrics_list, key):
         return [m[key] if m and key in m else None for m in metrics_list]
     
     # Define keys for unpacking
-    best_model_metric_keys = [
-        'va_cali_score_list_best', 'va_sharp_score_list_best', 'va_obs_props_list_best', 'va_q_preds_list_best', 'va_bag_nll_list_best', 'va_crps_list_best', 'va_mpiw_list_best', 'va_interval_list_best', 'va_check_list_best', 'va_ece_list_best',
-        'te_cali_score_list_best', 'te_sharp_score_list_best', 'te_obs_props_list_best', 'te_q_preds_list_best', 'te_g_cali_scores_list_best', 'te_scoring_rules_list_best', 'te_bag_nll_list_best', 'te_crps_list_best', 'te_mpiw_list_best', 'te_interval_list_best', 'te_check_list_best', 'te_ece_list_best',
-        'recal_model_list_best', 'recal_va_cali_score_list_best', 'recal_va_sharp_score_list_best', 'recal_va_obs_props_list_best', 'recal_va_q_preds_list_best', 'recal_va_g_cali_scores_list_best', 'recal_va_scoring_rules_list_best', 'recal_va_bag_nll_list_best', 'recal_va_crps_list_best', 'recal_va_mpiw_list_best', 'recal_va_interval_list_best', 'recal_va_check_list_best', 'recal_va_ece_list_best',
-        'recal_te_cali_score_list_best', 'recal_te_sharp_score_list_best', 'recal_te_obs_props_list_best', 'recal_te_q_preds_list_best', 'recal_te_g_cali_scores_list_best', 'recal_te_scoring_rules_list_best', 'recal_te_bag_nll_list_best', 'recal_te_crps_list_best', 'recal_te_mpiw_list_best', 'recal_te_interval_list_best', 'recal_te_check_list_best', 'recal_te_ece_list_best',
+    controlled_model_metric_keys = [
+        'va_cali_score_controlled', 'va_sharp_score_controlled', 'va_obs_props_controlled', 'va_q_preds_controlled', 'va_bag_nll_controlled', 'va_crps_controlled', 'va_mpiw_controlled', 'va_interval_controlled', 'va_check_controlled', 'va_ece_controlled',
+        'te_cali_score_controlled', 'te_sharp_score_controlled', 'te_obs_props_controlled', 'te_q_preds_controlled', 'te_g_cali_scores_controlled', 'te_scoring_rules_controlled', 'te_bag_nll_controlled', 'te_crps_controlled', 'te_mpiw_controlled', 'te_interval_controlled', 'te_check_controlled', 'te_ece_controlled',
+        'recal_model_controlled', 'recal_va_cali_score_controlled', 'recal_va_sharp_score_controlled', 'recal_va_obs_props_controlled', 'recal_va_q_preds_controlled', 'recal_va_g_cali_scores_controlled', 'recal_va_scoring_rules_controlled', 'recal_va_bag_nll_controlled', 'recal_va_crps_controlled', 'recal_va_mpiw_controlled', 'recal_va_interval_controlled', 'recal_va_check_controlled', 'recal_va_ece_controlled',
+        'recal_te_cali_score_controlled', 'recal_te_sharp_score_controlled', 'recal_te_obs_props_controlled', 'recal_te_q_preds_controlled', 'recal_te_g_cali_scores_controlled', 'recal_te_scoring_rules_controlled', 'recal_te_bag_nll_controlled', 'recal_te_crps_controlled', 'recal_te_mpiw_controlled', 'recal_te_interval_controlled', 'recal_te_check_controlled', 'recal_te_ece_controlled',
     ]
 
-    
     # Create lists of metrics in the local scope for saving
-    for list_name in best_model_metric_keys:
-        locals()[list_name] = dictlist_to_listdict(all_metrics_best, list_name.replace('_list_best', '_best'))
-
-    te_ece_list_best, te_sharp_score_list_best = get_frontier(ece=te_ece_list_best, sharp=te_sharp_score_list_best, min_thres=args.min_thres, max_thres=args.max_thres, num_thres=args.num_thres)
-    recal_te_ece_list_best, recal_te_sharp_score_list_best = get_frontier(ece=recal_te_ece_list_best, sharp=recal_te_sharp_score_list_best, min_thres=args.min_thres, max_thres=args.max_thres, num_thres=args.num_thres)
-    va_ece_list_best, va_sharp_score_list_best = get_frontier(ece=va_ece_list_best, sharp=va_sharp_score_list_best, min_thres=args.min_thres, max_thres=args.max_thres, num_thres=args.num_thres)
-    recal_va_ece_list_best, recal_va_sharp_score_list_best = get_frontier(ece=recal_va_ece_list_best, sharp=recal_va_sharp_score_list_best, min_thres=args.min_thres, max_thres=args.max_thres, num_thres=args.num_thres)
-    thresholds = te_ece_list_best
+    for list_name in controlled_model_metric_keys:
+        locals()[list_name] = dictlist_to_listdict(all_metrics_controlled, list_name.replace('_list_best', '_best'))
 
     save_var_names = [
         "args", "thresholds",
@@ -718,7 +703,7 @@ if __name__ == "__main__":
         "recal_te_cali_score", "recal_te_obs_props", "recal_te_q_preds", "recal_te_g_cali_scores", "recal_te_scoring_rules", "recal_te_bag_nll", "recal_te_crps", "recal_te_mpiw", "recal_te_interval", "recal_te_check",
     ]
     
-    save_var_names.extend(best_model_metric_keys)
+    save_var_names.extend(controlled_model_metric_keys)
 
     save_dic = {}
     current_locals = locals()
@@ -729,10 +714,10 @@ if __name__ == "__main__":
             print(f"Warning: Variable '{name}' not found in locals for saving.")
             continue
     
-    save_dic['va_exp_props_list_best'] = [torch.linspace(-2.0, 3.0, 501) for _ in range(args.num_thres)]
-    save_dic['te_exp_props_list_best'] = [torch.linspace(0.01, 0.99, 99) for _ in range(args.num_thres)]
+    save_dic['va_exp_props_controlled'] = [torch.linspace(-2.0, 3.0, 501) for _ in range(args.num_thres)]
+    save_dic['te_exp_props_controlled'] = [torch.linspace(0.01, 0.99, 99) for _ in range(args.num_thres)]
     if args.recal:
-        save_dic['recal_exp_props_list_best'] = [torch.linspace(0.01, 0.99, 99) for _ in range(args.num_thres)]
+        save_dic['recal_exp_props_controlled'] = [torch.linspace(0.01, 0.99, 99) for _ in range(args.num_thres)]
 
     with open(save_file_name, "wb") as pf:
         pkl.dump(save_dic, pf)
