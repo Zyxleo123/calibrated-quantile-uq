@@ -83,43 +83,37 @@ def plot_training_stats(data: Dict[str, Any], outpath: Optional[str]=None, show:
 
 def compare_ece_sharpness(data: Dict[str, Any], outpath: Optional[str]=None, show: bool=False):
     """
-    Compare testing ECE and sharpness between original and best models (trained with different ECE thresholds).
+    Compare testing ECE and sharpness between original and controlled models (trained with different ECE thresholds).
     Creates a 2x2 plot:
     - Row 1: Before Recalibration (ECE, Sharpness)
     - Row 2: After Recalibration (ECE, Sharpness)
     """
-    thresholds = safe_get(data, "te_ece_list_best")
+    thresholds = safe_get(data, "te_ece_controlled")
 
-    labels = ["Original"] + [f"Best@{t:.3f}" for t in thresholds]
+    labels = ["Original"] + [f"Controlled@{t:.3f}" for t in thresholds]
     x = np.arange(len(labels))
 
     # Data extraction
     te_ece_orig = safe_get(data, "te_ece")
-    te_ece_best_list = safe_get(data, "te_ece_list_best", [])
+    te_ece_controlled = safe_get(data, "te_ece_controlled", [])
     te_sharp_orig = safe_get(data, "te_sharp_score")
-    te_sharp_best_list = safe_get(data, "te_sharp_score_list_best", [])
+    te_sharp_controlled = safe_get(data, "te_sharp_score_controlled", [])
 
     recal_te_ece_orig = safe_get(data, "recal_te_ece")
-    recal_te_ece_best_list = safe_get(data, "recal_te_ece_list_best", [])
+    recal_te_ece_best_list = safe_get(data, "recal_te_ece_controlled", [])
     recal_te_sharp_orig = safe_get(data, "recal_te_sharp_score")
-    recal_te_sharp_best_list = safe_get(data, "recal_te_sharp_score_list_best", [])
-
-    def pad_list(lst, length):
-        return (lst + [None] * length)[:length]
+    recal_te_sharp_best_list = safe_get(data, "recal_te_sharp_score_controlled", [])
 
     # Combine data for plotting
-    ece_vals_before = [te_ece_orig] + pad_list(te_ece_best_list, len(thresholds))
-    sharp_vals_before = [te_sharp_orig] + pad_list(te_sharp_best_list, len(thresholds))
-    ece_vals_after = [recal_te_ece_orig] + pad_list(recal_te_ece_best_list, len(thresholds))
-    sharp_vals_after = [recal_te_sharp_orig] + pad_list(recal_te_sharp_best_list, len(thresholds))
-
-    def to_nan(l):
-        return [v if v is not None else np.nan for v in l]
+    ece_vals_before = [te_ece_orig] + te_ece_controlled
+    sharp_vals_before = [te_sharp_orig] + te_sharp_controlled
+    ece_vals_after = [recal_te_ece_orig] + recal_te_ece_best_list
+    sharp_vals_after = [recal_te_sharp_orig] + recal_te_sharp_best_list
 
     fig, axs = plt.subplots(2, 2, figsize=(max(12, 1.5 * len(labels)), 10), sharex=True)
 
     def plot_bars(ax, values, title):
-        bars = ax.bar(x, to_nan(values))
+        bars = ax.bar(x, values)
         ax.set_title(title)
         ax.grid(True, axis='y')
         _annotate_bars(ax, bars, fmt="{:.4f}")
@@ -154,13 +148,13 @@ def compare_ece_sharpness(data: Dict[str, Any], outpath: Optional[str]=None, sho
 
 def compare_scoring_rules(data: Dict[str, Any], outpath: Optional[str]=None, show: bool=False):
     """
-    Compare various scoring rules on the test set for original vs. best models.
+    Compare various scoring rules on the test set for original vs. controlled models.
     Plots are arranged in two rows: before and after recalibration.
     """
-    thresholds = safe_get(data, "te_ece_list_best")
+    thresholds = safe_get(data, "te_ece_controlled")
 
     metrics = ["bag_nll", "crps", "mpiw", "interval", "check", "cali_score"]
-    labels = ["Original"] + [f"Best@{t:.3f}" for t in thresholds]
+    labels = ["Original"] + [f"Controlled@{t:.3f}" for t in thresholds]
     x = np.arange(len(labels))
 
     n_metrics = len(metrics)
@@ -177,11 +171,11 @@ def compare_scoring_rules(data: Dict[str, Any], outpath: Optional[str]=None, sho
         ax_after = axs[1, i]
 
         k_orig_before = f"te_{m}"
-        k_best_before = f"te_{m}_list_best"
+        k_best_before = f"te_{m}_controlled"
         vals_before = [safe_get(data, k_orig_before)] + pad_list(safe_get(data, k_best_before, []), len(thresholds))
 
         k_orig_after = f"recal_te_{m}"
-        k_best_after = f"recal_te_{m}_list_best"
+        k_best_after = f"recal_te_{m}_controlled"
         vals_after = [safe_get(data, k_orig_after)] + pad_list(safe_get(data, k_best_after, []), len(thresholds))
 
         bars_before = ax_before.bar(x, to_nan(vals_before))
@@ -218,12 +212,12 @@ def compare_scoring_rules(data: Dict[str, Any], outpath: Optional[str]=None, sho
 
 def calibration_plot(data: Dict[str, Any], outpath: Optional[str]=None, show: bool=False):
     """
-    Plot calibration curves for original and best models.
+    Plot calibration curves for original and controlled models.
     Produces two plots:
     1. All curves on a single axis.
-    2. Pairwise comparisons of each best model against the original model, in subplots.
+    2. Pairwise comparisons of each controlled model against the original model, in subplots.
     """
-    thresholds = safe_get(data, "thresholds")
+    thresholds = safe_get(data, "te_ece_controlled")
     if thresholds is None:
         print("Warning: 'thresholds' key not found. Skipping calibration_plot.")
         return
@@ -233,12 +227,12 @@ def calibration_plot(data: Dict[str, Any], outpath: Optional[str]=None, show: bo
     orig_obs_props = safe_get(data, "te_obs_props")
     recal_orig_obs_props = safe_get(data, "recal_te_obs_props")
 
-    best_exp_props_list = safe_get(data, "te_exp_props_list_best", [])
-    best_obs_props_list = safe_get(data, "te_obs_props_list_best", [])
-    recal_best_obs_props_list = safe_get(data, "recal_te_obs_props_list_best", [])
+    controlled_exp_props_list = safe_get(data, "te_exp_props_controlled", [])
+    controlled_obs_props = safe_get(data, "te_obs_props_controlled", [])
+    recal_controlled_obs_props_list = safe_get(data, "recal_te_obs_props_controlled", [])
 
 
-    valid_indices = [i for i, qp in enumerate(best_exp_props_list) if qp is not None and i < len(thresholds)]
+    valid_indices = [i for i, qp in enumerate(controlled_exp_props_list) if qp is not None and i < len(thresholds)]
     if not valid_indices:
         return
 
@@ -258,11 +252,11 @@ def calibration_plot(data: Dict[str, Any], outpath: Optional[str]=None, show: bo
         if orig_exp_props is not None and recal_orig_obs_props is not None:
             ax.plot(orig_exp_props, recal_orig_obs_props, marker='x', linestyle='--', label="Recal Original", color='dimgray')
 
-        q_preds_best = best_exp_props_list[model_idx]
-        if model_idx < len(best_obs_props_list) and best_obs_props_list[model_idx] is not None:
-             ax.plot(q_preds_best, best_obs_props_list[model_idx], marker='o', linestyle='-', label="Best")
-        if model_idx < len(recal_best_obs_props_list) and recal_best_obs_props_list[model_idx] is not None:
-             ax.plot(q_preds_best, recal_best_obs_props_list[model_idx], marker='x', linestyle='--', label="Recal Best")
+        controlled_exp_props = controlled_exp_props_list[model_idx]
+        if model_idx < len(controlled_obs_props) and controlled_obs_props[model_idx] is not None:
+             ax.plot(controlled_exp_props, controlled_obs_props[model_idx], marker='o', linestyle='-', label="Controlled")
+        if model_idx < len(recal_controlled_obs_props_list) and recal_controlled_obs_props_list[model_idx] is not None:
+             ax.plot(controlled_exp_props, recal_controlled_obs_props_list[model_idx], marker='x', linestyle='--', label="Recal Controlled")
         
         ax.set_title(f"Threshold <= {t:.3f}")
         ax.legend()
@@ -303,50 +297,86 @@ def plot_ece_sharpness(data: Dict[str, Any], outpath: Optional[str]=None, show: 
     X-axis runs from 0 to data.args.max_ece_thres (falls back to 1.0).
     Y-axis lower bound is 0; upper bound is max(0.3, observed_max*1.05) so points above 0.3 are allowed.
     """
-    te_ece_best = safe_get(data, "te_ece_list_best", [])
-    te_sharp_best = safe_get(data, "te_sharp_score_list_best", [])
-    recal_ece_best = safe_get(data, "recal_te_ece_list_best", [])
-    recal_sharp_best = safe_get(data, "recal_te_sharp_score_list_best", [])
-    va_ece_best = safe_get(data, "va_ece_list_best", [])
-    va_sharp_best = safe_get(data, "va_sharp_score_list_best", [])
-    recal_va_ece_best = safe_get(data, "recal_va_ece_list_best", [])
-    recal_va_sharp_best = safe_get(data, "recal_va_sharp_score_list_best", [])
-
-    def to_array(lst):
-        if lst is None:
-            return np.array([], dtype=float)
-        return np.array([np.nan if v is None else v for v in lst], dtype=float)
-
-    x_te_before = to_array(te_ece_best)
-    y_te_before = to_array(te_sharp_best)
-    x_te_after = to_array(recal_ece_best)
-    y_te_after = to_array(recal_sharp_best)
-
-    x_va_before = to_array(va_ece_best)
-    y_va_before = to_array(va_sharp_best)
-    x_va_after = to_array(recal_va_ece_best)
-    y_va_after = to_array(recal_va_sharp_best)
+    te_ece_controlled = safe_get(data, "te_ece_controlled", [])
+    te_sharp_controlled = safe_get(data, "te_sharp_score_controlled", [])
+    recal_ece_controlled = safe_get(data, "recal_te_ece_controlled", [])
+    recal_sharp_controlled = safe_get(data, "recal_te_sharp_score_controlled", [])
+    va_ece_controlled = safe_get(data, "va_ece_controlled", [])
+    va_sharp_controlled = safe_get(data, "va_sharp_score_controlled", [])
+    recal_va_ece_controlled = safe_get(data, "recal_va_ece_controlled", [])
+    recal_va_sharp_controlled = safe_get(data, "recal_va_sharp_score_controlled", [])
 
     fig, axs = plt.subplots(2, 2, figsize=(14, 10), squeeze=False)
     panels = [
-        (axs[0,0], x_te_before, y_te_before, "Test: Before Recalibration"),
-        (axs[0,1], x_te_after,  y_te_after,  "Test: After Recalibration"),
-        (axs[1,0], x_va_before, y_va_before, "Val: Before Recalibration"),
-        (axs[1,1], x_va_after,  y_va_after,  "Val: After Recalibration"),
+        (axs[0,0], te_ece_controlled, te_sharp_controlled, "Test: Before Recalibration"),
+        (axs[0,1], recal_ece_controlled, recal_sharp_controlled, "Test: After Recalibration"),
+        (axs[1,0], va_ece_controlled, va_sharp_controlled, "Val: Before Recalibration"),
+        (axs[1,1], recal_va_ece_controlled, recal_va_sharp_controlled, "Val: After Recalibration"),
     ]
 
     for ax, x, y, title in panels:
-        ax.plot(x, y, marker='o', linestyle='-', label='Best models')
         ax.scatter(x, y, s=40)
-
         ax.set_title(title)
         ax.set_xlabel("ECE")
         ax.set_ylabel("Sharpness")
         ax.grid(True)
-
     fig.suptitle("Best-model ECE vs Sharpness (Test and Val)", fontsize=15)
     fig.tight_layout(rect=[0, 0.03, 1, 0.95])
 
+    if outpath:
+        out_dir = os.path.dirname(outpath)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        base, ext = os.path.splitext(outpath)
+        if ext == "":
+            ext = ".png"
+        target = base + ext
+        fig.savefig(target, dpi=150)
+    if show:
+        plt.show()
+    plt.close(fig)
+
+def overlap_ece_sharpness(datas: list, names: list, outpath: Optional[str]=None, show: bool=False):
+    """
+    Scatter plot of best-model ECE vs. Sharpness for multiple datasets/models on the same axes.
+
+    Layout: 2x2 grid
+    - Row 0: Test before / Test after recalibration
+    - Row 1: Val before / Val after recalibration
+    """
+    fig, axs = plt.subplots(2, 2, figsize=(14, 10), squeeze=False)
+    panels = [
+        (axs[0,0], "Test: Before Recalibration"),
+        (axs[0,1], "Test: After Recalibration"),
+        (axs[1,0], "Val: Before Recalibration"),
+        (axs[1,1], "Val: After Recalibration"),
+    ]
+
+    for data, name in zip(datas, names):
+        te_ece_controlled = safe_get(data, "te_ece_controlled", [])
+        te_sharp_controlled = safe_get(data, "te_sharp_score_controlled", [])
+        recal_ece_controlled = safe_get(data, "recal_te_ece_controlled", [])
+        recal_sharp_controlled = safe_get(data, "recal_te_sharp_score_controlled", [])
+        va_ece_controlled = safe_get(data, "va_ece_controlled", [])
+        va_sharp_controlled = safe_get(data, "va_sharp_score_controlled", [])
+        recal_va_ece_controlled = safe_get(data, "recal_va_ece_controlled", [])
+        recal_va_sharp_controlled = safe_get(data, "recal_va_sharp_score_controlled", [])
+        panel_data = [
+            (te_ece_controlled, te_sharp_controlled),
+            (recal_ece_controlled, recal_sharp_controlled),
+            (va_ece_controlled, va_sharp_controlled),
+            (recal_va_ece_controlled, recal_va_sharp_controlled),
+        ]
+        for (ax, title), (x, y) in zip(panels, panel_data):
+            ax.scatter(x, y, s=40, label=name)
+            ax.set_title(title)
+            ax.set_xlabel("ECE")
+            ax.set_ylabel("Sharpness")
+            ax.grid(True)
+            ax.legend()
+        
+    fig.suptitle("Best-model ECE vs Sharpness (Test and Val)", fontsize=15)
+    fig.tight_layout(rect=[0, 0.03, 1, 0.95])
     if outpath:
         out_dir = os.path.dirname(outpath)
         if out_dir:
