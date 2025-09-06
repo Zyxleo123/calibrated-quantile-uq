@@ -135,7 +135,12 @@ def main():
                         generate_plots_for_pickle(pkl_file, BASIC_INPUTS["save_dir"])
                     else:
                         print(f"Process finished with exit 0 but pickle not found: {pkl_file}. Removing from pending.")
-                    generate_overlap_plot(pkl_file, inputs["loss"], FULL_HYPERPARAMS["loss"], BASIC_INPUTS["save_dir"])
+                    print(f"Generating overlap plot for {pkl_file} if all baselines are ready.")
+                    ret = generate_overlap_plot(pkl_file, inputs["loss"], FULL_HYPERPARAMS["loss"], BASIC_INPUTS["save_dir"])
+                    if not ret:
+                        print(f"Overlap plot generation skipped for {pkl_file} due to missing baseline files.")
+                    else:
+                        print(f"Overlap plot generated for {pkl_file}.")
                     job_status.pop(pkl_file, None)
                 else:
                     # process failed; put it back

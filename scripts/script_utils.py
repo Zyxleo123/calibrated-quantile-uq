@@ -113,6 +113,8 @@ def generate_overlap_plot(current_pkl_path: str, current_baseline_name: str, bas
 	os.makedirs(outdir, exist_ok=True)
 
 	pkl_paths = [current_pkl_path.replace(current_baseline_name, bname) for bname in baseline_names]
+	if not all(os.path.exists(p) for p in pkl_paths):
+		return False
 	datas = [load_pickle(p) for p in pkl_paths]
-
 	overlap_ece_sharpness(datas, baseline_names, outpath=os.path.join(outdir, "overlap_ece_sharpness.png"))
+	return True
