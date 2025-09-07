@@ -19,7 +19,7 @@ from utils.misc_utils import get_save_file_name
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--test", action="store_true")
-    parser.add_argument("-f", "--filter_type", type=str, default="none", choices=["none", "one-hot"])
+    parser.add_argument("-f", "--filter_type", type=str, default="one-hot", choices=["one-hot"])
     parser.add_argument("-n", "--name", type=str)
     return parser.parse_args()
 
@@ -80,12 +80,11 @@ TEST_HYPERPARAMS = {
     "nl": [2],
     "hs": [64],
     "residual": [0],
-    "seed": [0, 1, 2, 3, 4],
+    "seed": [0, 1, 2],
     "loss": ["batch_qr", "batch_int", "batch_cal"],
 }
 
-# MAX_JOBS = 15
-MAX_JOBS = 2
+MAX_JOBS = 15
 
 # Close all subprocesses if the script is interrupted
 job_status = {}
@@ -106,40 +105,7 @@ def main():
     else:
         job_pool = deque([dict(zip(FULL_HYPERPARAMS, v)) for v in product(*FULL_HYPERPARAMS.values())])
     while job_pool or job_status:
-        if job_pool and len(job_status) < MAX_JOBS:
-            # Check/fix inputs
-            inputs = fix_inputs(job_pool.popleft())
-            if invalid_inputs(inputs):
-                continue
-
-            # Filter job & get job name
-            if script_args.filter_type == "one-hot":
-                one_hot_key = get_one_hot_param(inputs, DEFAULT_VALUE)
-                if one_hot_key is None:
-                    continue
-                job_name = f"{one_hot_key}-{inputs[one_hot_key]}"
-                job_dir = os.path.join(RESULT_BASE, inputs["data"], job_name)
-                BASIC_INPUTS["save_dir"] = job_dir
-                os.makedirs(job_dir, exist_ok=True)
-
-            free_gpu = pick_free_gpu_round_robin(min_free_mb=1500)
-            while free_gpu is None:
-                print("No GPU available with sufficient free memory. Waiting 10 seconds...")
-                time.sleep(10)
-                free_gpu = pick_free_gpu_round_robin(min_free_mb=1500)
-
-            try:
-                inputs["gpu"] = free_gpu
-                inputs.update(BASIC_INPUTS)
-                pkl_path = get_save_file_name(inputs)
-                # Launch process asynchronously and store in dict
-                proc = run_main(inputs)
-                job_status[pkl_path] = (proc, inputs)
-                print(f"Started process for {inputs} at GPU {free_gpu}")
-            except Exception as e:
-                # If launching fails, do not add to pending and log error
-                print(f"Failed to launch main.py for {inputs}: {e}")
-                continue
+        # First, clean up finished jobs
         if job_status:
             for pkl_file, (proc, inputs) in list(job_status.items()):
                 ret = proc.poll()
@@ -165,6 +131,43 @@ def main():
                     print(f"Process for {pkl_file} failed with exit code {ret}. Re-queuing.")
                     job_status.pop(pkl_file, None)
                     job_pool.append(inputs)
+        # Only launch new jobs if we have capacity
+        while job_pool and len(job_status) < MAX_JOBS:
+            # Check/fix inputs
+            inputs = fix_inputs(job_pool.popleft())
+            if invalid_inputs(inputs):
+                continue
+
+            # Filter job & get job name
+            if script_args.filter_type == "one-hot" and script_args.test is False:
+                one_hot_key = get_one_hot_param(inputs, DEFAULT_VALUE)
+                if one_hot_key is None:
+                    continue
+                job_name = f"{one_hot_key}-{inputs[one_hot_key]}"
+            if script_args.test:
+                inputs["num_ep"] = 300
+                job_name = "test"
+            job_dir = os.path.join(RESULT_BASE, inputs["data"], job_name)
+            BASIC_INPUTS["save_dir"] = job_dir
+            os.makedirs(job_dir, exist_ok=True)
+            free_gpu = pick_free_gpu_round_robin(min_free_mb=1500)
+            while free_gpu is None:
+                print("No GPU available with sufficient free memory. Waiting 10 seconds...")
+                time.sleep(10)
+                free_gpu = pick_free_gpu_round_robin(min_free_mb=1500)
+
+            try:
+                inputs["gpu"] = free_gpu
+                inputs.update(BASIC_INPUTS)
+                pkl_path = get_save_file_name(inputs)
+                # Launch process asynchronously and store in dict
+                proc = run_main(inputs)
+                job_status[pkl_path] = (proc, inputs)
+                print(f"Started process for {inputs} at GPU {free_gpu}")
+            except Exception as e:
+                # If launching fails, do not add to pending and log error
+                print(f"Failed to launch main.py for {inputs}: {e}")
+                continue
         time.sleep(10)
 
 if __name__ == "__main__":
