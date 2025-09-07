@@ -382,6 +382,18 @@ class EceSharpFrontier:
 
         return True
     
+    def _find_best_sharp_within_thres(self, thres):
+        best_sharp = None
+        best_model = None
+        for entry in self.entries:
+            if entry["ece"] <= thres:
+                if best_sharp is None or entry["sharp"] < best_sharp:
+                    best_sharp = entry["sharp"]
+                    best_model = entry["model"]
+            else:
+                break
+        return best_sharp, best_model
+    
     def get_thresholded_frontier(self, min_thres=0.01, max_thres=0.15, num_thres=100):
         """
         Get a list of (ece_thres, best_sharp) where ece_thres is uniformly spaced between min_thres and max_thres,
@@ -399,11 +411,11 @@ class EceSharpFrontier:
 
         for thres in ece_thres:
             # Find the best sharp value for this threshold
-            valid_entries = [entry for entry in self.entries if entry["ece"] <= thres]
-            if valid_entries:
+            sharp, model = self._find_best_sharp_within_thres(thres)
+            if sharp is not None:
                 best_ece.append(thres)
-                best_sharp.append(min(entry["sharp"] for entry in valid_entries))
-                best_model.append(valid_entries[np.argmin([entry["sharp"] for entry in valid_entries])]["model"])
+                best_sharp.append(sharp)
+                best_model.append(model)
 
         result_frontier = EceSharpFrontier()
         result_frontier.entries = [{"ece": float(ece), "sharp": sharp, "model": model} for ece, sharp, model in zip(best_ece, best_sharp, best_model)]
@@ -422,11 +434,17 @@ class EceSharpFrontier:
 
     def get_entries(self):
         return list(self.entries)
+    
+    def get_three_lists(self):
+        ece_list = [entry["ece"] for entry in self.entries]
+        sharp_list = [entry["sharp"] for entry in self.entries]
+        model_list = [entry["model"] for entry in self.entries]
+        return ece_list, sharp_list, model_list
 
     def clear(self):
         self.entries = []
 
-def get_frontier(ece, sharp, min_thres, max_thres, num_thres):
+def to_thresholded(ece, sharp, min_thres, max_thres, num_thres):
     frontier = EceSharpFrontier.from_list(list(zip(ece, sharp))).get_thresholded_frontier(min_thres, max_thres, num_thres).get_entries()
     ece_frontier = [entry["ece"] for entry in frontier]
     sharp_frontier = [entry["sharp"] for entry in frontier]
