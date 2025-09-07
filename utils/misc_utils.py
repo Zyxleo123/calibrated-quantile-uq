@@ -458,7 +458,7 @@ def get_save_file_name(args) -> str:
     args["residual"] = bool(args["residual"])
     args["batch_norm"] = bool(args["batch_norm"])
     args["layer_norm"] = bool(args["layer_norm"])
-    save_file_name = "{}/{}_loss{}_ens{}_boot{}_res{}_ln{}_bn{}_dr{}_lr{}_bs{}_nl{}_hs{}.pkl".format(
+    save_file_name = "{}/{}_loss{}_ens{}_boot{}_res{}_ln{}_bn{}_dr{}_lr{}_bs{}_nl{}_hs{}_{}.pkl".format(
         args["save_dir"],
         args["data"],
         args["loss"],
@@ -472,6 +472,7 @@ def get_save_file_name(args) -> str:
 		args["bs"],
         args["nl"],
         args["hs"],
+        args["seed"],
     )
     return save_file_name
 
