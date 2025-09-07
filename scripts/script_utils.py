@@ -82,17 +82,40 @@ def pick_free_gpu(min_free_mb: int = 1000) -> Optional[int]:
 	avail = find_available_gpus(min_free_mb=min_free_mb)
 	return avail[0] if avail else None
 
-def is_one_hot_job(inputs, default_value_dict) -> bool:
+_last_gpu_idx = -1  # global variable to track last used GPU index
+
+def pick_free_gpu_round_robin(min_free_mb: int = 1000) -> Optional[int]:
 	"""
-	Return True if the job configuration should be skipped based on constraints.
+	Pick and return a GPU index with at least min_free_mb free memory in round-robin order.
+	Returns None if none available.
+	"""
+	global _last_gpu_idx
+	available = find_available_gpus(min_free_mb=min_free_mb)
+	if not available:
+		return None
+	available_sorted = sorted(available)
+	if _last_gpu_idx not in available_sorted:
+		# start from the first available if last used is not available
+		_next_idx = 0
+	else:
+		_next_idx = (available_sorted.index(_last_gpu_idx) + 1) % len(available_sorted)
+	selected = available_sorted[_next_idx]
+	_last_gpu_idx = selected
+	return selected
+
+def get_one_hot_param(inputs, default_value_dict) -> Optional[str]:
+	"""
+	Return the one-hot parameter if the job configuration is one-hot, else None.
 	"""
 	num_hot = 0
+	one_hot_key = None
 	for key, val in inputs.items():
 		if key in default_value_dict and val != default_value_dict[key]:
+			one_hot_key = key
 			num_hot += 1
-	if num_hot > 1:
-		return True
-	return False
+			if num_hot > 1:
+				return None
+	return one_hot_key
 
 def generate_plots_for_pickle(pkl_path: str, out_parent_dir: str):
     base = os.path.basename(pkl_path)
@@ -115,3 +138,21 @@ def generate_overlap_plot(current_pkl_path: str, current_baseline_name: str, bas
 	datas = [load_pickle(p) for p in pkl_paths]
 	overlap_ece_sharpness(datas, baseline_names, outpath=os.path.join(out_parent_dir, "overlap_ece_sharpness.png"))
 	return True
+
+def fix_inputs(inputs: Dict) -> Dict:
+	"""
+	Fix and return a new inputs dict with consistent settings.
+	For example, if num_ens=1, set boot=0.
+	"""
+	new_inputs = inputs.copy()
+	if new_inputs.get("num_ens", 1) == 1:
+		new_inputs["boot"] = 0
+	return new_inputs
+
+def invalid_inputs(inputs: Dict) -> bool:
+	"""
+	Return True if the job configuration should be skipped based on constraints.
+	"""
+	if inputs["batch_norm"] == 1 and inputs["layer_norm"] == 1:
+		return True
+	return False

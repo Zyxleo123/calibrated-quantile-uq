@@ -723,6 +723,7 @@ if __name__ == "__main__":
     save_dic['te_exp_props_controlled'] = [torch.linspace(0.01, 0.99, 99) for _ in range(args.num_thres)]
     if args.recal:
         save_dic['recal_exp_props_controlled'] = [torch.linspace(0.01, 0.99, 99) for _ in range(args.num_thres)]
+    save_dic['args'] = vars(args)
 
     with open(save_file_name, "wb") as pf:
         pkl.dump(save_dic, pf)
