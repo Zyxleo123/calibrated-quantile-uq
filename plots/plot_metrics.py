@@ -318,13 +318,13 @@ def plot_ece_sharpness(data: Dict[str, Any], outpath: Optional[str]=None, show: 
 
     for ax, x, y, marginal_sharpness, title in panels:
         ax.scatter(x, y, s=40)
-        ax.axhline(marginal_sharpness, color='r', linestyle=':', linewidth=1.5, label='Marginal Sharpness')
+        # ax.axhline(marginal_sharpness, color='r', linestyle=':', linewidth=1.5, label='Marginal Sharpness')
         ax.set_title(title)
         ax.set_xlabel("ECE")
         ax.set_ylabel("Sharpness")
         ax.grid(True)
         ax.legend()
-    fig.suptitle("Best-model ECE vs Sharpness (Test and Val)", fontsize=15)
+    fig.suptitle(f"{safe_get(data, 'args')['data']} Seed {safe_get(data, 'args')['seed']}: ECE-Sharpness", fontsize=15)
     fig.tight_layout(rect=[0, 0.03, 1, 0.95])
 
     if outpath:
@@ -376,14 +376,14 @@ def overlap_ece_sharpness(datas: list, names: list, outpath: Optional[str]=None,
         ]
         for (ax, title), (x, y, marginal_sharpness) in zip(panels, panel_data):
             ax.scatter(x, y, s=40, label=name)
-            ax.axhline(marginal_sharpness, color='r', linestyle=':', linewidth=1.5, label='Marginal Sharpness')
+            # ax.axhline(marginal_sharpness, color='r', linestyle=':', linewidth=1.5, label='Marginal Sharpness')
             ax.set_title(title)
             ax.set_xlabel("ECE")
             ax.set_ylabel("Sharpness")
             ax.grid(True)
             ax.legend()
         
-    fig.suptitle("Best-model ECE vs Sharpness (Test and Val)", fontsize=15)
+    fig.suptitle(f"{safe_get(data, 'args')['data']} Seed {safe_get(data, 'args')['seed']}: ECE-Sharpness", fontsize=15)
     fig.tight_layout(rect=[0, 0.03, 1, 0.95])
     if outpath:
         out_dir = os.path.dirname(outpath)
