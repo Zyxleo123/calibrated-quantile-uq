@@ -125,8 +125,8 @@ def generate_plots_for_pickle(pkl_path: str, out_parent_dir: str):
 
     data = load_pickle(pkl_path)
     plot_training_stats(data, outpath=os.path.join(outdir, "training_stats.png"))
-    compare_ece_sharpness(data, outpath=os.path.join(outdir, "ece_sharpness_comparison.png"))
-    calibration_plot(data, outpath=os.path.join(outdir, "calibration_plot.png"))
+    # compare_ece_sharpness(data, outpath=os.path.join(outdir, "ece_sharpness_comparison.png"))
+    # calibration_plot(data, outpath=os.path.join(outdir, "calibration_plot.png"))
     plot_ece_sharpness(data, outpath=os.path.join(outdir, "ece_sharpness_curve.png"))
 
 def generate_overlap_plot(current_pkl_path: str, current_baseline_name: str, baseline_names: List[str], out_parent_dir: str):
