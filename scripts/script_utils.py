@@ -103,19 +103,100 @@ def pick_free_gpu_round_robin(min_free_mb: int = 1000) -> Optional[int]:
 	_last_gpu_idx = selected
 	return selected
 
-def get_one_hot_param(inputs, default_value_dict) -> Optional[str]:
-	"""
-	Return the one-hot parameter if the job configuration is one-hot, else None.
-	"""
-	num_hot = 0
-	one_hot_key = None
-	for key, val in inputs.items():
-		if key in default_value_dict and val != default_value_dict[key]:
-			one_hot_key = key
-			num_hot += 1
-			if num_hot > 1:
-				return None
-	return one_hot_key
+RESULT_BASE = os.path.join(os.environ["SCRATCH"], "results")
+
+BASIC_INPUTS = {
+    "save_dir": RESULT_BASE,
+    "min_thres": 0.001,
+    "max_thres": 0.15,
+    "num_thres": 150,
+    "wait": 100000,
+}
+
+DEFAULT_VALUE = {
+    "num_ens": 1,
+    "nl": 2,
+    "hs": 64,
+    "residual": 0,
+    "batch_norm": 0,
+    "layer_norm": 0,
+    "dropout": 0.0,
+    "activation": "relu",
+}
+
+TEST_HYPERPARAMS = {
+    "skip_existing": [0],
+    "data": ["boston"],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "nl": [2],
+    "hs": [64],
+    "residual": [0],
+    "seed": [0, 1, 2, 3, 4],
+    "loss": ["batch_qr", "batch_int", "batch_cal"],
+    # "loss": ["batch_qr"]
+}
+
+FULL_HYPERPARAMS = {
+    "skip_existing": [1],
+    "data": ["boston", "concrete", "energy", "kin8nm", "naval", "power", "protein", "wine", "yacht"],
+    "lr": [1e-3],
+    "bs": [64],
+    # "batch_norm": [0, 1],
+    "batch_norm": [0],
+    # "layer_norm": [0, 1],
+    "layer_norm": [0],
+    # "dropout": [0.0, 0.1, 0.3, 0.5],
+    "dropout": [0.0],
+    # "num_ens": [1, 2, 5],
+    "num_ens": [1],
+    # "boot": [0, 1],
+    "boot": [0],
+    "nl": [8, 1, 2, 4],
+    "hs": [256, 32, 64, 128],
+    "residual": [0, 1],
+    "seed": [0, 1, 2, 3, 4],
+    "loss": ["batch_qr", "batch_int", "batch_cal"],
+}
+
+NL_HS_COMBINATIONS = [
+	(1, 32),
+	(2, 64),
+	(4, 128),
+	(8, 256),
+]
+
+def get_one_hot_param(inputs: dict, default_value_dict: dict) -> Optional[str]:
+    """
+    Return the one-hot parameter if the job configuration is one-hot, else None.
+    Special case: if both 'nl' and 'hs' are non-defaults, check if the combination is valid.
+    """
+    # collect non-default keys
+    non_default_keys = [
+        k for k, v in inputs.items()
+        if k in default_value_dict and v != default_value_dict[k]
+    ]
+
+    if len(non_default_keys) == 0:
+        return "default"
+
+    if len(non_default_keys) == 1:
+        k = non_default_keys[0]
+        return f"{k}-{inputs[k]}"
+
+    if len(non_default_keys) == 2 and set(non_default_keys) == {"nl", "hs"}:
+        nl_val, hs_val = inputs["nl"], inputs["hs"]
+        if (nl_val, hs_val) in NL_HS_COMBINATIONS:  # You’d need to implement this
+            return f"nl-{nl_val}_hs-{hs_val}"
+        return None
+
+    return None
+
 
 def generate_plots_for_pickle(pkl_path: str, out_parent_dir: str):
     base = os.path.basename(pkl_path)
@@ -129,14 +210,14 @@ def generate_plots_for_pickle(pkl_path: str, out_parent_dir: str):
     # calibration_plot(data, outpath=os.path.join(outdir, "calibration_plot.png"))
     plot_ece_sharpness(data, outpath=os.path.join(outdir, "ece_sharpness_curve.png"))
 
-def generate_overlap_plot(current_pkl_path: str, current_baseline_name: str, baseline_names: List[str], out_parent_dir: str):
+def generate_overlap_plot(current_pkl_path: str, current_baseline_name: str, baseline_names: List[str], out_parent_dir: str, file_name: str):
 	os.makedirs(out_parent_dir, exist_ok=True)
 
 	pkl_paths = [current_pkl_path.replace(current_baseline_name, bname) for bname in baseline_names]
 	if not all(os.path.exists(p) for p in pkl_paths):
 		return False
 	datas = [load_pickle(p) for p in pkl_paths]
-	overlap_ece_sharpness(datas, baseline_names, outpath=os.path.join(out_parent_dir, "overlap_ece_sharpness.png"))
+	overlap_ece_sharpness(datas, baseline_names, outpath=os.path.join(out_parent_dir, file_name))
 	return True
 
 def fix_inputs(inputs: Dict) -> Dict:
@@ -153,6 +234,10 @@ def invalid_inputs(inputs: Dict) -> bool:
 	"""
 	Return True if the job configuration should be skipped based on constraints.
 	"""
-	if inputs["batch_norm"] == 1 and inputs["layer_norm"] == 1:
+	if inputs.get("batch_norm", 0) == 1 and inputs.get("layer_norm", 0) == 1:
+		return True
+	if inputs.get("num_ens", 1) == 1 and inputs.get("boot", 0) == 1:
+		return True
+	if (inputs.get("nl", 2), inputs.get("hs", 64)) not in NL_HS_COMBINATIONS:
 		return True
 	return False
