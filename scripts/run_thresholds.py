@@ -13,7 +13,12 @@ from script_utils import (dict_to_cli_args,
                           generate_plots_for_pickle, 
                           generate_overlap_plot, 
                           fix_inputs, 
-                          invalid_inputs)
+                          invalid_inputs,
+                          RESULT_BASE,
+                          BASIC_INPUTS,
+                          DEFAULT_VALUE,
+                          FULL_HYPERPARAMS,
+                          TEST_HYPERPARAMS)
 from utils.misc_utils import get_save_file_name
 
 def parse_args():
@@ -25,66 +30,11 @@ def parse_args():
 
 def run_main(inputs):
     cmd = ["python", "main.py"] + dict_to_cli_args(inputs)
-    print(cmd)
     proc = subprocess.Popen(cmd)
     return proc
 
-RESULT_BASE = os.path.join(os.environ["SCRATCH"], "results")
 
-BASIC_INPUTS = {
-    "save_dir": RESULT_BASE,
-    "min_thres": 0.01,
-    "max_thres": 0.15,
-    "num_thres": 100,
-    "wait": 100000,
-}
-
-DEFAULT_VALUE = {
-    "num_ens": 1,
-    "nl": 2,
-    "hs": 64,
-    "residual": 0,
-    "batch_norm": 0,
-    "layer_norm": 0,
-    "dropout": 0.0,
-    "activation": "relu",
-}
-
-FULL_HYPERPARAMS = {
-    "skip_existing": [1],
-    "data": ["boston", "concrete", "energy", "kin8nm", "naval", "power", "protein", "wine", "yacht"],
-    "lr": [1e-3],
-    "bs": [64],
-    "batch_norm": [0, 1],
-    "layer_norm": [0, 1],
-    "dropout": [0.0, 0.1, 0.3, 0.5],
-    "num_ens": [1, 2, 5],
-    "boot": [0, 1],
-    "nl": [1, 2, 3, 4, 5, 6, 7],
-    "hs": [16, 32, 64, 128, 256],
-    "residual": [0, 1],
-    "seed": [0, 1, 2, 3, 4],
-    "loss": ["batch_qr", "batch_int", "batch_cal"],
-}
-
-TEST_HYPERPARAMS = {
-    "skip_existing": [0],
-    "data": ["boston"],
-    "lr": [1e-3],
-    "bs": [64],
-    "batch_norm": [0],
-    "layer_norm": [0],
-    "dropout": [0.0],
-    "num_ens": [1],
-    "boot": [0],
-    "nl": [2],
-    "hs": [64],
-    "residual": [0],
-    "seed": [0, 1, 2],
-    "loss": ["batch_qr", "batch_int", "batch_cal"],
-}
-
-MAX_JOBS = 15
+MAX_JOBS = 30
 
 # Close all subprocesses if the script is interrupted
 job_status = {}
@@ -115,39 +65,37 @@ def main():
                 # process finished
                 if ret == 0:
                     if os.path.exists(pkl_file):
-                        print(f"Process succeeded, generating plots for {pkl_file}")
-                        generate_plots_for_pickle(pkl_file, job_dir)
+                        print(f"Process succeeded: {inputs}")
+                        generate_plots_for_pickle(pkl_file, inputs['save_dir'])
                     else:
-                        print(f"Process finished with exit 0 but pickle not found: {pkl_file}. Removing from pending.")
-                    print(f"Generating overlap plot for {pkl_file} if all baselines are ready.")
-                    ret = generate_overlap_plot(pkl_file, inputs["loss"], FULL_HYPERPARAMS["loss"], job_dir)
+                        print(f"Process succeeded but pickle not found: {inputs}")
+                    ret = generate_overlap_plot(pkl_file, inputs["loss"], FULL_HYPERPARAMS["loss"], inputs['save_dir'], file_name=f"overlap_plot_{inputs['seed']}")
                     if not ret:
-                        print(f"Overlap plot generation skipped for {pkl_file} due to missing baseline files.")
+                        pass
                     else:
-                        print(f"Overlap plot generated for {pkl_file}.")
+                        print(f"Overlap plot generated: {inputs}")
                     job_status.pop(pkl_file, None)
                 else:
                     # process failed; put it back
-                    print(f"Process for {pkl_file} failed with exit code {ret}. Re-queuing.")
+                    print(f"Process exited: {inputs}")
                     job_status.pop(pkl_file, None)
                     job_pool.append(inputs)
         # Only launch new jobs if we have capacity
         while job_pool and len(job_status) < MAX_JOBS:
             # Check/fix inputs
-            inputs = fix_inputs(job_pool.popleft())
+            inputs = job_pool.popleft()
             if invalid_inputs(inputs):
                 continue
 
             # Filter job & get job name
             if script_args.filter_type == "one-hot" and script_args.test is False:
-                one_hot_key = get_one_hot_param(inputs, DEFAULT_VALUE)
-                if one_hot_key is None:
+                job_name = get_one_hot_param(inputs, DEFAULT_VALUE)
+                if job_name is None:
                     continue
-                job_name = f"{one_hot_key}-{inputs[one_hot_key]}"
             if script_args.test:
                 inputs["num_ep"] = 300
                 job_name = "test"
-            job_dir = os.path.join(RESULT_BASE, inputs["data"], job_name)
+            job_dir = os.path.join(RESULT_BASE, script_args.name, inputs["data"], job_name)
             BASIC_INPUTS["save_dir"] = job_dir
             os.makedirs(job_dir, exist_ok=True)
             free_gpu = pick_free_gpu_round_robin(min_free_mb=1500)
@@ -163,12 +111,13 @@ def main():
                 # Launch process asynchronously and store in dict
                 proc = run_main(inputs)
                 job_status[pkl_path] = (proc, inputs)
-                print(f"Started process for {inputs} at GPU {free_gpu}")
+                print(f"GPU {free_gpu}: {inputs}")
             except Exception as e:
                 # If launching fails, do not add to pending and log error
-                print(f"Failed to launch main.py for {inputs}: {e}")
+                print(f"Failed launching {inputs}: {e}")
                 continue
-        time.sleep(10)
+            if not script_args.test:
+                time.sleep(1)
 
 if __name__ == "__main__":
     main()
