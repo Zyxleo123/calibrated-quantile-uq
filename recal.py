@@ -14,7 +14,8 @@ def iso_recal(exp_props, obs_props):
         assert torch.min(obs_props) == 0.0
         assert torch.max(obs_props) == 1.0
     except:
-        print("Obs props not ideal: from {} to {}".format(min_obs, max_obs))
+        # print("Obs props not ideal: from {} to {}".format(min_obs, max_obs))
+        pass
     # just need observed prop values between 0 and 1
     # problematic if min_obs_p > 0 and max_obs_p < 1
 
