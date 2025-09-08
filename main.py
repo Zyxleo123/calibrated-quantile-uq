@@ -63,13 +63,13 @@ def get_loss_fn(loss_name):
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--min_thres", type=float, default=0.01, help="Minimum ECE threshold"
+        "--min_thres", type=float, default=0.001, help="Minimum ECE threshold"
     )
     parser.add_argument(
         "--max_thres", type=float, default=0.15, help="Maximum ECE threshold"
     )
     parser.add_argument(
-        "--num_thres", type=int, default=100, help="Number of ECE thresholds"
+        "--num_thres", type=int, default=150, help="Number of ECE thresholds"
     )
     parser.add_argument(
         "--num_ens", type=int, default=1, help="number of members in ensemble"
@@ -231,7 +231,7 @@ if __name__ == "__main__":
 
     args = parse_args()
 
-    print("DEVICE: {}".format(args.device))
+    # print("DEVICE: {}".format(args.device))
 
     if args.debug:
         import pudb
@@ -257,11 +257,11 @@ if __name__ == "__main__":
     va_interval_list = []
     va_check_list = []
 
-    print(
-        "Drawing group batches every {}, penalty {}".format(
-            args.draw_group_every, args.sharp_penalty
-        )
-    )
+    # print(
+    #     "Drawing group batches every {}, penalty {}".format(
+    #         args.draw_group_every, args.sharp_penalty
+    #     )
+    # )
 
     # Save file name
     if "penalty" not in args.loss:
@@ -318,7 +318,6 @@ if __name__ == "__main__":
         data_out.y_al,
     )
     y_range = (y_al.max() - y_al.min()).item()
-    print("y range: {:.3f}".format(y_range))
 
     # Making models
     num_tr = x_tr.shape[0]
@@ -379,7 +378,7 @@ if __name__ == "__main__":
     group_list = discretize_domain(x_tr.numpy(), args.bs)
     curr_group_idx = 0
 
-    for ep in tqdm.tqdm(range(args.num_ep)):
+    for ep in range(args.num_ep):
         if model_ens.done_training:
             print("Done training ens at EP {}".format(ep))
             break
@@ -458,9 +457,9 @@ if __name__ == "__main__":
 
         # Printing some losses
         if (ep % 200 == 0) or (ep == args.num_ep - 1):
-            print("EP:{}".format(ep))
-            print("Train loss {}".format(ep_tr_loss))
-            print("Val loss {}".format(ep_va_loss))
+            print(f"{vars(args)} EP:{ep}")
+            # print("Train loss {}".format(ep_tr_loss))
+            # print("Val loss {}".format(ep_va_loss))
 
         validation_device = torch.device("cpu")
         model_ens.use_device(validation_device)
@@ -496,9 +495,7 @@ if __name__ == "__main__":
         frontier.insert(ece, sharp_score, deepcopy(model_ens), only_frontier=True)
 
     # Finished training
-    print(f"Total of {len(frontier.entries)} frontier entries recorded.")
-    # We are interested best sharpness models controlled by set ECE thresholds
-    thresholded_frontier = frontier.get_thresholded_frontier(args.min_thres, args.max_thres, args.num_thres).get_entries()
+    # print(f"Total of {len(frontier.entries)} frontier entries recorded.")
 
     # Move everything to testing device
     testing_device = torch.device('cpu')
@@ -620,8 +617,9 @@ if __name__ == "__main__":
             )
         )
 
-    all_metrics_controlled = []
-    for entry in tqdm.tqdm(thresholded_frontier, desc="Testing controlled models"):
+    metrics_controlled = []
+    recal_frontier = EceSharpFrontier()
+    for entry in frontier.get_entries():
         controlled_model_ens = entry['model']
         current_metrics_tmp = {}
         current_metrics_tmp['model_controlled'] = controlled_model_ens
@@ -653,24 +651,29 @@ if __name__ == "__main__":
         # Recalibration for controlled model
         if args.recal:
             recal_model_controlled_tmp = iso_recal(va_exp_props_controlled_recal, va_obs_props_controlled_recal)
-            current_metrics_tmp['recal_model_controlled'] = recal_model_controlled_tmp
             recal_exp_props_controlled_tmp = torch.linspace(0.01, 0.99, 99, device=testing_device)
             # Recal on Validation
-            current_metrics_tmp['recal_va_sharp_score_controlled'], current_metrics_tmp['recal_va_obs_props_controlled'] = test_uq(
+            recal_va_sharp_score_controlled_tmp, recal_va_obs_props_controlled_tmp = test_uq(
                 controlled_model_ens, x_va, y_va, recal_exp_props_controlled_tmp, y_range, recal_model=recal_model_controlled_tmp, recal_type="sklearn", output_sharp_score_only=True
             )
-            current_metrics_tmp['recal_va_ece_controlled'] = average_calibration(
+            recal_va_ece_controlled_tmp = average_calibration(
                 controlled_model_ens, x_va, y_va, args=Namespace(exp_props=recal_exp_props_controlled_tmp, device=testing_device, metric="cal_q", recal_model=recal_model_controlled_tmp, recal_type="sklearn")
             )
-            # Recal on Test
-            current_metrics_tmp['recal_te_sharp_score_controlled'], current_metrics_tmp['recal_te_obs_props_controlled'] = test_uq(
-                controlled_model_ens, x_te, y_te, recal_exp_props_controlled_tmp, y_range, recal_model=recal_model_controlled_tmp, recal_type="sklearn", output_sharp_score_only=True 
-            )
-            current_metrics_tmp['recal_te_ece_controlled'] = average_calibration(
-                controlled_model_ens, x_te, y_te, args=Namespace(exp_props=recal_exp_props_controlled_tmp, device=testing_device, metric="cal_q", recal_model=recal_model_controlled_tmp, recal_type="sklearn")
-            )
-        all_metrics_controlled.append(current_metrics_tmp)
-    
+            recal_frontier.insert(recal_va_ece_controlled_tmp, recal_va_sharp_score_controlled_tmp, (controlled_model_ens, recal_model_controlled_tmp), only_frontier=True)
+        metrics_controlled.append(current_metrics_tmp)
+
+    # Get frontier of recalibrated controlled models and evaluate their val/test metrics
+    _, _, recal_model_controlled_list = recal_frontier.get_three_lists()
+    recal_metrics_controlled = []
+    for controlled_model_ens, recal_model_controlled_tmp in recal_model_controlled_list:
+        current_metrics_tmp = {}
+        current_metrics_tmp['recal_model_controlled'] = (controlled_model_ens, recal_model_controlled_tmp)
+        current_metrics_tmp['recal_va_sharp_score_controlled'], current_metrics_tmp['recal_va_obs_props_controlled'] = test_uq(controlled_model_ens, x_va, y_va, va_exp_props_controlled_tmp, y_range, recal_model=recal_model_controlled_tmp, recal_type="sklearn", output_sharp_score_only=True)
+        current_metrics_tmp['recal_va_ece_controlled'] = average_calibration(controlled_model_ens, x_va, y_va, args=Namespace(exp_props=va_exp_props_controlled_tmp, device=testing_device, metric="cal_q", recal_model=recal_model_controlled_tmp, recal_type="sklearn"))
+        current_metrics_tmp['recal_te_sharp_score_controlled'], _ = test_uq(controlled_model_ens, x_te, y_te, te_exp_props, y_range, recal_model=recal_model_controlled_tmp, recal_type="sklearn", output_sharp_score_only=True)
+        current_metrics_tmp['recal_te_ece_controlled'] = average_calibration(controlled_model_ens, x_te, y_te, args=Namespace(exp_props=te_exp_props, device=testing_device, metric="cal_q", recal_model=recal_model_controlled_tmp, recal_type="sklearn"))
+        recal_metrics_controlled.append(current_metrics_tmp)
+
     # Compute marginal sharpness of the target variable
     va_marginal_sharpness = compute_marginal_sharpness(y_va, y_range)
     te_marginal_sharpness = compute_marginal_sharpness(y_te, y_range)
@@ -679,17 +682,46 @@ if __name__ == "__main__":
     def dictlist_to_listdict(metrics_list, key):
         return [m[key] if m and key in m else None for m in metrics_list]
     
+    save_dic = {}
+
     # Define keys for unpacking
-    controlled_model_metric_keys = [
-        'model_controlled', 'va_cali_score_controlled', 'va_sharp_score_controlled', 'va_obs_props_controlled', 'va_q_preds_controlled', 'va_bag_nll_controlled', 'va_crps_controlled', 'va_mpiw_controlled', 'va_interval_controlled', 'va_check_controlled', 'va_ece_controlled',
-        'te_cali_score_controlled', 'te_sharp_score_controlled', 'te_obs_props_controlled', 'te_q_preds_controlled', 'te_g_cali_scores_controlled', 'te_scoring_rules_controlled', 'te_bag_nll_controlled', 'te_crps_controlled', 'te_mpiw_controlled', 'te_interval_controlled', 'te_check_controlled', 'te_ece_controlled',
-        'recal_model_controlled', 'recal_va_cali_score_controlled', 'recal_va_sharp_score_controlled', 'recal_va_obs_props_controlled', 'recal_va_q_preds_controlled', 'recal_va_g_cali_scores_controlled', 'recal_va_scoring_rules_controlled', 'recal_va_bag_nll_controlled', 'recal_va_crps_controlled', 'recal_va_mpiw_controlled', 'recal_va_interval_controlled', 'recal_va_check_controlled', 'recal_va_ece_controlled',
-        'recal_te_cali_score_controlled', 'recal_te_sharp_score_controlled', 'recal_te_obs_props_controlled', 'recal_te_q_preds_controlled', 'recal_te_g_cali_scores_controlled', 'recal_te_scoring_rules_controlled', 'recal_te_bag_nll_controlled', 'recal_te_crps_controlled', 'recal_te_mpiw_controlled', 'recal_te_interval_controlled', 'recal_te_check_controlled', 'recal_te_ece_controlled',
+    controlled_metric_keys = [
+        'model_controlled', 'va_sharp_score_controlled', 'te_sharp_score_controlled', 'va_ece_controlled', 'te_ece_controlled',
+        'va_cali_score_controlled', 'va_obs_props_controlled', 'va_q_preds_controlled', 'va_g_cali_scores_controlled', 'va_scoring_rules_controlled', 'va_bag_nll_controlled', 'va_crps_controlled', 'va_mpiw_controlled', 'va_interval_controlled', 'va_check_controlled',
+        'te_cali_score_controlled', 'te_obs_props_controlled', 'te_q_preds_controlled', 'te_g_cali_scores_controlled', 'te_scoring_rules_controlled', 'te_bag_nll_controlled', 'te_crps_controlled', 'te_mpiw_controlled', 'te_interval_controlled', 'te_check_controlled',
+
+        'recal_model_controlled', 'recal_va_sharp_score_controlled', 'recal_te_sharp_score_controlled', 'recal_va_ece_controlled', 'recal_te_ece_controlled',
+        'recal_va_cali_score_controlled', 'recal_va_obs_props_controlled', 'recal_va_q_preds_controlled', 'recal_va_g_cali_scores_controlled', 'recal_va_scoring_rules_controlled', 'recal_va_bag_nll_controlled', 'recal_va_crps_controlled', 'recal_va_mpiw_controlled', 'recal_va_interval_controlled', 'recal_va_check_controlled',
+        'recal_te_cali_score_controlled', 'recal_te_obs_props_controlled', 'recal_te_q_preds_controlled', 'recal_te_g_cali_scores_controlled', 'recal_te_scoring_rules_controlled', 'recal_te_bag_nll_controlled', 'recal_te_crps_controlled', 'recal_te_mpiw_controlled', 'recal_te_interval_controlled', 'recal_te_check_controlled',
     ]
 
     # Create lists of metrics in the local scope for saving
-    for list_name in controlled_model_metric_keys:
-        locals()[list_name] = dictlist_to_listdict(all_metrics_controlled, list_name.replace('_list_best', '_best'))
+    for list_name in controlled_metric_keys:
+        if list_name.startswith('recal_'):
+            if list_name not in recal_metrics_controlled[0]:
+                save_dic[list_name] = [None for _ in range(len(recal_metrics_controlled))]
+            else:
+                save_dic[list_name] = dictlist_to_listdict(recal_metrics_controlled, list_name)
+        else:
+            if list_name not in metrics_controlled[0]:
+                save_dic[list_name] = [None for _ in range(len(metrics_controlled))]
+            else:
+                save_dic[list_name] = dictlist_to_listdict(metrics_controlled, list_name)
+    
+    frontier.attach_test_ece_sharpness(save_dic['te_ece_controlled'], save_dic['te_sharp_score_controlled'])
+    save_dic['thresholds'], save_dic['va_ece_thresholded'], save_dic['te_ece_thresholded'], \
+    save_dic['va_sharp_score_thresholded'], save_dic['te_sharp_score_thresholded'], save_dic['model_thresholded'] = \
+    frontier.get_thresholded_performance_with_test(args.min_thres, args.max_thres, args.num_thres)
+
+    recal_frontier.attach_test_ece_sharpness(save_dic['recal_te_ece_controlled'], save_dic['recal_te_sharp_score_controlled'])
+    save_dic['recal_thresholds'], save_dic['recal_va_ece_thresholded'], save_dic['recal_te_ece_thresholded'], \
+    save_dic['recal_va_sharp_score_thresholded'], save_dic['recal_te_sharp_score_thresholded'], save_dic['recal_model_thresholded'] = \
+    recal_frontier.get_thresholded_performance_with_test(args.min_thres, args.max_thres, args.num_thres)
+
+    save_dic['va_exp_props_controlled'] = [torch.linspace(-2.0, 3.0, 501) for _ in range(args.num_thres)]
+    save_dic['te_exp_props_controlled'] = [torch.linspace(0.01, 0.99, 99) for _ in range(args.num_thres)]
+    if args.recal:
+        save_dic['recal_exp_props_controlled'] = [torch.linspace(0.01, 0.99, 99) for _ in range(args.num_thres)]
 
     save_var_names = [
         "args", "va_marginal_sharpness", "te_marginal_sharpness",
@@ -704,26 +736,18 @@ if __name__ == "__main__":
 
         "recal_exp_props",
         "recal_va_sharp_score", "recal_te_sharp_score", "recal_va_ece", "recal_te_ece",
+
         "recal_va_cali_score", "recal_va_obs_props", "recal_va_q_preds", "recal_va_g_cali_scores", "recal_va_scoring_rules", "recal_va_bag_nll", "recal_va_crps", "recal_va_mpiw", "recal_va_interval", "recal_va_check",
         "recal_te_cali_score", "recal_te_obs_props", "recal_te_q_preds", "recal_te_g_cali_scores", "recal_te_scoring_rules", "recal_te_bag_nll", "recal_te_crps", "recal_te_mpiw", "recal_te_interval", "recal_te_check",
     ]
     
-    save_var_names.extend(controlled_model_metric_keys)
-
-    save_dic = {}
     current_locals = locals()
     for name in save_var_names:
         if name in current_locals:
             save_dic[name] = current_locals[name]
         else:
-            print(f"Warning: Variable '{name}' not found in locals for saving.")
+            # print(f"Warning: Variable '{name}' not found in locals for saving.")
             continue
-    
-    save_dic['va_exp_props_controlled'] = [torch.linspace(-2.0, 3.0, 501) for _ in range(args.num_thres)]
-    save_dic['te_exp_props_controlled'] = [torch.linspace(0.01, 0.99, 99) for _ in range(args.num_thres)]
-    if args.recal:
-        save_dic['recal_exp_props_controlled'] = [torch.linspace(0.01, 0.99, 99) for _ in range(args.num_thres)]
-    save_dic['args'] = vars(args)
 
     with open(save_file_name, "wb") as pf:
         pkl.dump(save_dic, pf)

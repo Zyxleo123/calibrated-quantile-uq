@@ -312,19 +312,19 @@ class EceSharpFrontier:
     def __init__(self):
         self.entries = []  # sorted by ece ascending
 
-    def _find_insert_pos(self, ece_val):
+    def _find_insert_pos(self, new_ece):
         # first index with ece > ece_val
         lo = 0
         hi = len(self.entries)
         while lo < hi:
             mid = (lo + hi) // 2
-            if self.entries[mid]["ece"] <= ece_val:
+            if self.entries[mid]["ece"] <= new_ece:
                 lo = mid + 1
             else:
                 hi = mid
         return lo
 
-    def insert(self, ece_val, sharp_val, model_obj=None, only_frontier=False):
+    def insert(self, new_ece, new_sharp, model_obj=None, only_frontier=False):
         """
         Try to insert (ece_val, sharp_val, model_obj).
         Always insert. If the new sharp is worse than the left neighbor,
@@ -333,22 +333,22 @@ class EceSharpFrontier:
         with the previous entry's model as well.
         Returns True (insertion always happens unless capacity trimming logic removes it).
         """
-        pos = self._find_insert_pos(ece_val)
+        pos = self._find_insert_pos(new_ece)
         left_sharp = (
             self.entries[pos - 1]["sharp"] if pos - 1 >= 0 else None
         )
         # Dominated by left neighbor
-        if left_sharp is not None and sharp_val > left_sharp:
+        if left_sharp is not None and new_sharp > left_sharp:
             if not only_frontier:
-                sharp_val = left_sharp
+                new_sharp = left_sharp
                 model_obj = self.entries[pos - 1]["model"]
             else:
                 return False
 
         # Current point not dominated 
         new_entry = {
-            "ece": float(ece_val),
-            "sharp": float(sharp_val),
+            "ece": self._to_float(new_ece),
+            "sharp": self._to_float(new_sharp),
             "model": model_obj,
         }
         self.entries.insert(pos, new_entry)
@@ -356,11 +356,11 @@ class EceSharpFrontier:
         # Check if any rightward points are dominated
         if not only_frontier:
             for i in range(pos + 1, len(self.entries)):
-                if self.entries[i]["sharp"] > sharp_val:
-                    self.entries[i]["sharp"] = sharp_val
+                if self.entries[i]["sharp"] > new_sharp:
+                    self.entries[i]["sharp"] = new_sharp
                     self.entries[i]["model"] = model_obj
         else:
-            while pos + 1 < len(self.entries) and self.entries[pos + 1]["sharp"] > sharp_val:
+            while pos + 1 < len(self.entries) and self.entries[pos + 1]["sharp"] > new_sharp:
                 self.entries.pop(pos + 1)
 
         # Remove if too close to neighbor in both ece and sharp
@@ -384,42 +384,92 @@ class EceSharpFrontier:
     
     def _find_best_sharp_within_thres(self, thres):
         best_sharp = None
-        best_model = None
+        result_thres = None
+        result_ece = None
+        result_sharp = None
+        result_model = None
         for entry in self.entries:
             if entry["ece"] <= thres:
                 if best_sharp is None or entry["sharp"] < best_sharp:
                     best_sharp = entry["sharp"]
-                    best_model = entry["model"]
-            else:
-                break
-        return best_sharp, best_model
+                    result_thres = thres
+                    result_ece = entry['ece']
+                    result_sharp = entry["sharp"]
+                    result_model = entry["model"]
+        return result_thres, result_ece, result_sharp, result_model
     
-    def get_thresholded_frontier(self, min_thres=0.01, max_thres=0.15, num_thres=100):
+    def _find_best_sharp_within_thres_with_test(self, thres):
+        best_sharp = None
+        result_ece = None
+        result_sharp = None
+        result_model = None
+        result_thres = None
+        for entry in self.entries:
+            if entry["ece"][0] <= thres:
+                if best_sharp is None or entry["sharp"][0] < best_sharp:
+                    best_sharp = entry["sharp"][0]
+                    result_thres = thres
+                    result_ece = (entry['ece'][0], entry["ece"][1])
+                    result_sharp = (entry["sharp"][0], entry["sharp"][1])
+                    result_model = entry["model"]
+        return result_thres, result_ece, result_sharp, result_model
+    
+    def _to_float(self, val):
+        if isinstance(val, (list, tuple, np.ndarray)):
+            for i in range(len(val)):
+                val[i] = float(val[i])
+            return val
+        return float(val)
+
+    def get_thresholded_performance(self, min_thres, max_thres, num_thres):
         """
         Get a list of (ece_thres, best_sharp) where ece_thres is uniformly spaced between min_thres and max_thres,
             and best_sharp is the lowest sharp value among the entries within that threshold.
         """
-        if min_thres is None:
-            min_thres = self.entries[0]["ece"] if self.entries else 0
-        if max_thres is None:
-            max_thres = self.entries[-1]["ece"] if self.entries else 1
-
         ece_thres = np.linspace(min_thres, max_thres, num_thres)
-        best_ece = []
-        best_sharp = []
-        best_model = []
+        ece_thres = self._to_float(ece_thres)
+        controlled_thres = []
+        controlled_ece = []
+        controlled_sharp = []
+        controlled_model = []
 
         for thres in ece_thres:
             # Find the best sharp value for this threshold
-            sharp, model = self._find_best_sharp_within_thres(thres)
+            thres, ece, sharp, model = self._find_best_sharp_within_thres(thres)
             if sharp is not None:
-                best_ece.append(thres)
-                best_sharp.append(sharp)
-                best_model.append(model)
+                controlled_thres.append(thres)
+                controlled_ece.append(ece)
+                controlled_sharp.append(sharp)
+                controlled_model.append(model)
+        
+        return controlled_thres, controlled_ece, controlled_sharp, controlled_model
+    
+    def get_thresholded_performance_with_test(self, min_thres, max_thres, num_thres):
+        """
+        Get a list of (ece_thres, best_sharp) where ece_thres is uniformly spaced between min_thres and max_thres,
+            and best_sharp is the lowest sharp value among the entries within that threshold.
+        """
+        ece_thres = np.linspace(min_thres, max_thres, num_thres)
+        ece_thres = self._to_float(ece_thres)
+        controlled_thres = []
+        controlled_va_ece = []
+        controlled_te_ece = []
+        controlled_va_sharp = []
+        controlled_te_sharp = []
+        controlled_model = []
 
-        result_frontier = EceSharpFrontier()
-        result_frontier.entries = [{"ece": float(ece), "sharp": sharp, "model": model} for ece, sharp, model in zip(best_ece, best_sharp, best_model)]
-        return result_frontier
+        for thres in ece_thres:
+            # Find the best sharp value for this threshold
+            thres, ece, sharp, model = self._find_best_sharp_within_thres_with_test(thres)
+            if sharp is not None:
+                controlled_thres.append(thres)
+                controlled_va_ece.append(ece[0])
+                controlled_te_ece.append(ece[1])
+                controlled_va_sharp.append(sharp[0])
+                controlled_te_sharp.append(sharp[1])
+                controlled_model.append(model)
+
+        return controlled_thres, controlled_va_ece, controlled_te_ece, controlled_va_sharp, controlled_te_sharp, controlled_model
 
     @classmethod
     def from_list(cls, entry_list, only_frontier=False):
@@ -440,6 +490,13 @@ class EceSharpFrontier:
         sharp_list = [entry["sharp"] for entry in self.entries]
         model_list = [entry["model"] for entry in self.entries]
         return ece_list, sharp_list, model_list
+    
+    def attach_test_ece_sharpness(self, test_ece_list, test_sharp_list):
+        assert len(test_ece_list) == len(self.entries)
+        assert len(test_sharp_list) == len(self.entries)
+        for i in range(len(self.entries)):
+            self.entries[i]["ece"] = (self.entries[i]["ece"], test_ece_list[i])
+            self.entries[i]["sharp"] = (self.entries[i]["sharp"], test_sharp_list[i])
 
     def clear(self):
         self.entries = []
