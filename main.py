@@ -708,7 +708,8 @@ if __name__ == "__main__":
         else:
             save_dic[list_name] = dictlist_to_listdict(metrics_controlled, list_name)
     
-    frontier.attach_test_ece_sharpness(save_dic['te_ece_controlled'], save_dic['te_sharp_score_controlled'])
+    frontier.attach_metrics(metrics_controlled, exclude_keys=['va_ece_controlled', 'va_sharp_score_controlled'])
+
     save_dic['thresholds'], save_dic['va_ece_thresholded'], save_dic['te_ece_thresholded'], \
         save_dic['va_sharp_score_thresholded'], save_dic['te_sharp_score_thresholded'], save_dic['model_thresholded'] = \
         frontier.get_thresholded_performance_with_test(args.min_thres, args.max_thres, args.num_thres)
