@@ -491,12 +491,17 @@ class EceSharpFrontier:
         model_list = [entry["model"] for entry in self.entries]
         return ece_list, sharp_list, model_list
     
-    def attach_test_ece_sharpness(self, test_ece_list, test_sharp_list):
-        assert len(test_ece_list) == len(self.entries)
-        assert len(test_sharp_list) == len(self.entries)
-        for i in range(len(self.entries)):
-            self.entries[i]["ece"] = (self.entries[i]["ece"], test_ece_list[i])
-            self.entries[i]["sharp"] = (self.entries[i]["sharp"], test_sharp_list[i])
+    def attach_metrics(self, metrics_list, exclude_keys=None):
+        """
+        Attach a dict of metrics to each frontier entry.
+        metrics_list: list of dicts where each dict contains metrics for the corresponding entry.
+        exclude_keys: optional iterable of keys to exclude when attaching.
+        """
+        if exclude_keys is None:
+            exclude_keys = []
+        for i, mdict in enumerate(metrics_list):
+            filtered = {k: v for k, v in mdict.items() if k not in exclude_keys}
+            self.entries[i]["metrics"] = filtered
 
     def clear(self):
         self.entries = []
