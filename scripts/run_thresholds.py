@@ -41,7 +41,7 @@ job_status = {}
 import signal
 def signal_handler(sig, frame):
     print("Interrupt received, closing all subprocesses...")
-    for proc, inputs in job_status.values():
+    for proc, inputs, start_time in job_status.values():
         proc.terminate()
     sys.exit(0)
 
@@ -57,27 +57,18 @@ def main():
     while job_pool or job_status:
         # First, clean up finished jobs
         if job_status:
-            for pkl_file, (proc, inputs) in list(job_status.items()):
+            for pkl_file, (proc, inputs, start_time) in list(job_status.items()):
                 ret = proc.poll()
                 if ret is None:
                     # still running
                     continue
                 # process finished
                 if ret == 0:
-                    if os.path.exists(pkl_file):
-                        print(f"Process succeeded: {inputs}")
-                        generate_plots_for_pickle(pkl_file, inputs['save_dir'])
-                    else:
-                        print(f"Process succeeded but pickle not found: {inputs}")
-                    ret = generate_overlap_plot(pkl_file, inputs["loss"], FULL_HYPERPARAMS["loss"], inputs['save_dir'], file_name=f"overlap_plot_{inputs['seed']}")
-                    if not ret:
-                        pass
-                    else:
-                        print(f"Overlap plot generated: {inputs}")
+                    print(f"Process succeeded. Time: {time.time() - start_time:.1f}s. Inputs: {inputs}")
                     job_status.pop(pkl_file, None)
                 else:
                     # process failed; put it back
-                    print(f"Process exited: {inputs}")
+                    print(f"Process exited. Ret: {ret}. Time: {time.time() - start_time:.1f}s. Inputs: {inputs}")
                     job_status.pop(pkl_file, None)
                     job_pool.append(inputs)
         # Only launch new jobs if we have capacity
@@ -110,7 +101,7 @@ def main():
                 pkl_path = get_save_file_name(inputs)
                 # Launch process asynchronously and store in dict
                 proc = run_main(inputs)
-                job_status[pkl_path] = (proc, inputs)
+                job_status[pkl_path] = (proc, inputs, time.time())
                 print(f"GPU {free_gpu}: {inputs}")
             except Exception as e:
                 # If launching fails, do not add to pending and log error
