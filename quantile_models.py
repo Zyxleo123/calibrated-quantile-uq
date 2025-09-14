@@ -439,6 +439,34 @@ def average_calibration(model, X, y, args): # all done
 
 
 """ Sharpness """
+def mean_variance(model, X, y, args):
+    """
+    Calculates variance of the conditional distribution using quantiles.
+    E(X) = \int_0^1 q(X, p) dp
+    E(X^2) = \int_0^1 q(X, p)^2 dp
+    Var(X) = E(X^2) - E(X)^2
+    as a results ground truth y is not used
+    """
+    q_list = torch.linspace(0.01, 0.99, 99)
+
+    num_pts = y.size(0)
+    num_q = q_list.size(0)
+
+    q_rep = q_list.view(-1, 1).repeat(1, num_pts).view(-1, 1).to(args.device)
+
+    model_in = torch.cat([X.repeat(num_q, 1), q_rep], dim=1)
+    with torch.no_grad():
+        pred_y = model.predict(model_in)
+
+    pred_y_mat = pred_y.reshape(num_q, num_pts).T
+    
+    ex = torch.mean(pred_y_mat, dim=1)
+    ex2 = torch.mean(pred_y_mat**2, dim=1)
+    var = torch.mean(ex2 - ex**2)
+
+    return var
+
+
 def mpiw(model, X, y, args): # all done
     """
     Calculates MPIW of a single alpha
