@@ -117,7 +117,7 @@ DEFAULT_VALUE = {
     "num_ens": 1,
     "nl": 2,
     "hs": 64,
-    "residual": 0,
+    # "residual": 0,
     "batch_norm": 0,
     "layer_norm": 0,
     "dropout": 0.0,
@@ -134,11 +134,12 @@ TEST_HYPERPARAMS = {
     "dropout": [0.0],
     "num_ens": [1],
     "boot": [0],
-    "nl": [2],
-    "hs": [64],
-    "residual": [0],
-    "seed": [0, 1, 2, 3, 4],
-    "loss": ["batch_qr", "batch_int", "batch_cal"],
+    "nl": [1, 2],
+    "hs": [32, 64],
+    "residual": [1],
+    "seed": [0, 1, 2],
+    "loss": ["batch_qr", "batch_int"],
+	"num_ep": [300],
     # "loss": ["batch_qr"]
 }
 
@@ -159,7 +160,7 @@ FULL_HYPERPARAMS = {
     "boot": [0],
     "nl": [8, 1, 2, 4],
     "hs": [256, 32, 64, 128],
-    "residual": [0, 1],
+    "residual": [1],
     "seed": [0, 1, 2, 3, 4],
     "loss": ["batch_qr", "batch_int", "batch_cal"],
 }
