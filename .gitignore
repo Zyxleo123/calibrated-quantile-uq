@@ -3,3 +3,4 @@ utils/NNKit/*
 *__pycache__*
 *.log
 results
+*.pkl
