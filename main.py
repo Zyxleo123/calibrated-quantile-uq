@@ -98,8 +98,8 @@ def parse_args():
     parser.add_argument(
         "--num_ep", type=int, default=1000, help="number of epochs"
     )
-    parser.add_argument("--nl", type=int, default=2, help="number of layers")
-    parser.add_argument("--hs", type=int, default=64, help="hidden size")
+    parser.add_argument("--nl", type=int, default=1, help="number of layers")
+    parser.add_argument("--hs", type=int, default=32, help="hidden size")
 
     parser.add_argument("--lr", type=float, default=1e-3, help="learning rate")
     parser.add_argument("--wd", type=float, default=0.0, help="weight decay")
@@ -107,7 +107,7 @@ def parse_args():
     parser.add_argument(
         "--wait",
         type=int,
-        default=200,
+        default=100000,
         help="how long to wait for lower validation loss",
     )
 
@@ -653,7 +653,7 @@ if __name__ == "__main__":
         current_metrics_tmp['te_mpiw_controlled'] = float(torch.mean(mpiw(controlled_model_ens, x_te, y_te, args_for_score)))
         current_metrics_tmp['te_interval_controlled'] = float(interval_score(controlled_model_ens, x_te, y_te, args_for_score))
         current_metrics_tmp['te_check_controlled'] = float(check_loss(controlled_model_ens, x_te, y_te, args_for_score))
-        current_metrics_tmp['te_variance_controlled'] = float(mean_variance(controlled_model_ens, x_te, args_for_score))
+        current_metrics_tmp['te_variance_controlled'] = float(mean_variance(controlled_model_ens, x_te, y_te, args_for_score))
         # Recalibration for controlled model
         if args.recal:
             recal_model_controlled_tmp = iso_recal(va_exp_props_controlled_recal, va_obs_props_controlled_recal)
@@ -679,7 +679,7 @@ if __name__ == "__main__":
             current_metrics_tmp['recal_te_mpiw_controlled'] = float(torch.mean(mpiw(controlled_model_ens, x_te, y_te, args_for_score)))
             current_metrics_tmp['recal_te_interval_controlled'] = float(interval_score(controlled_model_ens, x_te, y_te, args_for_score))
             current_metrics_tmp['recal_te_check_controlled'] = float(check_loss(controlled_model_ens, x_te, y_te, args_for_score))
-            current_metrics_tmp['recal_te_variance_controlled'] = float(mean_variance(controlled_model_ens, x_te, args_for_score))
+            current_metrics_tmp['recal_te_variance_controlled'] = float(mean_variance(controlled_model_ens, x_te, y_te, args_for_score))
         metrics_controlled.append(current_metrics_tmp)
 
     # Compute marginal sharpness of the target variable
@@ -694,26 +694,26 @@ if __name__ == "__main__":
 
     # Define keys for unpacking
     controlled_metric_keys = [
-        'model_controlled', 'va_sharp_score_controlled', 'te_sharp_score_controlled', 'va_ece_controlled', 'te_ece_controlled',
+        'va_sharp_score_controlled', 'te_sharp_score_controlled', 'va_ece_controlled', 'te_ece_controlled',
         'va_variance_controlled', 'va_cali_score_controlled', 'va_obs_props_controlled', 'va_q_preds_controlled', 'va_g_cali_scores_controlled', 'va_scoring_rules_controlled', 'va_bag_nll_controlled', 'va_crps_controlled', 'va_mpiw_controlled', 'va_interval_controlled', 'va_check_controlled',
         'te_variance_controlled', 'te_cali_score_controlled', 'te_obs_props_controlled', 'te_q_preds_controlled', 'te_g_cali_scores_controlled', 'te_scoring_rules_controlled', 'te_bag_nll_controlled', 'te_crps_controlled', 'te_mpiw_controlled', 'te_interval_controlled', 'te_check_controlled',
 
-        'recal_model_controlled', 'recal_va_sharp_score_controlled', 'recal_te_sharp_score_controlled', 'recal_va_ece_controlled', 'recal_te_ece_controlled',
+        'recal_va_sharp_score_controlled', 'recal_te_sharp_score_controlled', 'recal_va_ece_controlled', 'recal_te_ece_controlled',
         'recal_va_variance_controlled', 'recal_va_cali_score_controlled', 'recal_va_obs_props_controlled', 'recal_va_q_preds_controlled', 'recal_va_g_cali_scores_controlled', 'recal_va_scoring_rules_controlled', 'recal_va_bag_nll_controlled', 'recal_va_crps_controlled', 'recal_va_mpiw_controlled', 'recal_va_interval_controlled', 'recal_va_check_controlled',
         'recal_te_variance_controlled', 'recal_te_cali_score_controlled', 'recal_te_obs_props_controlled', 'recal_te_q_preds_controlled', 'recal_te_g_cali_scores_controlled', 'recal_te_scoring_rules_controlled', 'recal_te_bag_nll_controlled', 'recal_te_crps_controlled', 'recal_te_mpiw_controlled', 'recal_te_interval_controlled', 'recal_te_check_controlled',
     ]
 
     # Create lists of metrics in the local scope for saving
     for list_name in controlled_metric_keys:
-        if list_name not in metrics_controlled[0]:
+        if len(metrics_controlled) == 0 or list_name not in metrics_controlled[0]:
             save_dic[list_name] = [None for _ in range(len(metrics_controlled))]
         else:
             save_dic[list_name] = dictlist_to_listdict(metrics_controlled, list_name)
     
-    save_dic['va_exp_props_controlled'] = [torch.linspace(-2.0, 3.0, 501) for _ in range(args.num_thres)]
-    save_dic['te_exp_props_controlled'] = [torch.linspace(0.01, 0.99, 99) for _ in range(args.num_thres)]
+    save_dic['va_exp_props_controlled'] = [torch.linspace(-2.0, 3.0, 501) for _ in range(len(metrics_controlled))]
+    save_dic['te_exp_props_controlled'] = [torch.linspace(0.01, 0.99, 99) for _ in range(len(metrics_controlled))]
     if args.recal:
-        save_dic['recal_exp_props_controlled'] = [torch.linspace(0.01, 0.99, 99) for _ in range(args.num_thres)]
+        save_dic['recal_exp_props_controlled'] = [torch.linspace(0.01, 0.99, 99) for _ in range(len(metrics_controlled))]
 
     save_var_names = [
         "args", "va_marginal_sharpness", "te_marginal_sharpness",
