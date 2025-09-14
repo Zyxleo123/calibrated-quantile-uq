@@ -618,7 +618,6 @@ if __name__ == "__main__":
         )
 
     metrics_controlled = []
-    recal_frontier = EceSharpFrontier()
     for entry in frontier.get_entries():
         controlled_model_ens = entry['model']
         current_metrics_tmp = {}
@@ -647,32 +646,39 @@ if __name__ == "__main__":
         current_metrics_tmp['te_ece_controlled'] = average_calibration(
             controlled_model_ens, x_te, y_te, args=Namespace(exp_props=te_exp_props_controlled_tmp, device=testing_device, metric="cal_q")
         )
-
+        # Other scoring rules on test
+        args_for_score = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99), alpha_list=torch.linspace(0.01, 0.20, 20))
+        current_metrics_tmp['te_bag_nll_controlled'] = float(bag_nll(controlled_model_ens, x_te, y_te, args_for_score))
+        current_metrics_tmp['te_crps_controlled'] = float(crps_score(controlled_model_ens, x_te, y_te, args_for_score))
+        current_metrics_tmp['te_mpiw_controlled'] = float(torch.mean(mpiw(controlled_model_ens, x_te, y_te, args_for_score)))
+        current_metrics_tmp['te_interval_controlled'] = float(interval_score(controlled_model_ens, x_te, y_te, args_for_score))
+        current_metrics_tmp['te_check_controlled'] = float(check_loss(controlled_model_ens, x_te, y_te, args_for_score))
         # Recalibration for controlled model
         if args.recal:
             recal_model_controlled_tmp = iso_recal(va_exp_props_controlled_recal, va_obs_props_controlled_recal)
             recal_exp_props_controlled_tmp = torch.linspace(0.01, 0.99, 99, device=testing_device)
             # Recal on Validation
-            recal_va_sharp_score_controlled_tmp, recal_va_obs_props_controlled_tmp = test_uq(
+            current_metrics_tmp['recal_va_sharp_score_controlled'], current_metrics_tmp['recal_va_obs_props_controlled'] = test_uq(
                 controlled_model_ens, x_va, y_va, recal_exp_props_controlled_tmp, y_range, recal_model=recal_model_controlled_tmp, recal_type="sklearn", output_sharp_score_only=True
             )
-            recal_va_ece_controlled_tmp = average_calibration(
+            current_metrics_tmp['recal_va_ece_controlled'] = average_calibration(
                 controlled_model_ens, x_va, y_va, args=Namespace(exp_props=recal_exp_props_controlled_tmp, device=testing_device, metric="cal_q", recal_model=recal_model_controlled_tmp, recal_type="sklearn")
             )
-            recal_frontier.insert(recal_va_ece_controlled_tmp, recal_va_sharp_score_controlled_tmp, (controlled_model_ens, recal_model_controlled_tmp), only_frontier=True)
+            # Recal on Testing
+            current_metrics_tmp['recal_te_sharp_score_controlled'], current_metrics_tmp['recal_te_obs_props_controlled'] = test_uq(
+                controlled_model_ens, x_te, y_te, recal_exp_props_controlled_tmp, y_range, recal_model=recal_model_controlled_tmp, recal_type="sklearn", output_sharp_score_only=True
+            )
+            current_metrics_tmp['recal_te_ece_controlled'] = average_calibration(
+                controlled_model_ens, x_te, y_te, args=Namespace(exp_props=recal_exp_props_controlled_tmp, device=testing_device, metric="cal_q", recal_model=recal_model_controlled_tmp, recal_type="sklearn")
+            )
+            # Other scoring rules
+            args_for_score = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99), alpha_list=torch.linspace(0.01, 0.20, 20), recal_model=recal_model_controlled_tmp, recal_type="sklearn")
+            current_metrics_tmp['recal_te_bag_nll_controlled'] = float(bag_nll(controlled_model_ens, x_te, y_te, args_for_score))
+            current_metrics_tmp['recal_te_crps_controlled'] = float(crps_score(controlled_model_ens, x_te, y_te, args_for_score))
+            current_metrics_tmp['recal_te_mpiw_controlled'] = float(torch.mean(mpiw(controlled_model_ens, x_te, y_te, args_for_score)))
+            current_metrics_tmp['recal_te_interval_controlled'] = float(interval_score(controlled_model_ens, x_te, y_te, args_for_score))
+            current_metrics_tmp['recal_te_check_controlled'] = float(check_loss(controlled_model_ens, x_te, y_te, args_for_score))
         metrics_controlled.append(current_metrics_tmp)
-
-    # Get frontier of recalibrated controlled models and evaluate their val/test metrics
-    _, _, recal_model_controlled_list = recal_frontier.get_three_lists()
-    recal_metrics_controlled = []
-    for controlled_model_ens, recal_model_controlled_tmp in recal_model_controlled_list:
-        current_metrics_tmp = {}
-        current_metrics_tmp['recal_model_controlled'] = (controlled_model_ens, recal_model_controlled_tmp)
-        current_metrics_tmp['recal_va_sharp_score_controlled'], current_metrics_tmp['recal_va_obs_props_controlled'] = test_uq(controlled_model_ens, x_va, y_va, va_exp_props_controlled_tmp, y_range, recal_model=recal_model_controlled_tmp, recal_type="sklearn", output_sharp_score_only=True)
-        current_metrics_tmp['recal_va_ece_controlled'] = average_calibration(controlled_model_ens, x_va, y_va, args=Namespace(exp_props=va_exp_props_controlled_tmp, device=testing_device, metric="cal_q", recal_model=recal_model_controlled_tmp, recal_type="sklearn"))
-        current_metrics_tmp['recal_te_sharp_score_controlled'], _ = test_uq(controlled_model_ens, x_te, y_te, te_exp_props, y_range, recal_model=recal_model_controlled_tmp, recal_type="sklearn", output_sharp_score_only=True)
-        current_metrics_tmp['recal_te_ece_controlled'] = average_calibration(controlled_model_ens, x_te, y_te, args=Namespace(exp_props=te_exp_props, device=testing_device, metric="cal_q", recal_model=recal_model_controlled_tmp, recal_type="sklearn"))
-        recal_metrics_controlled.append(current_metrics_tmp)
 
     # Compute marginal sharpness of the target variable
     va_marginal_sharpness = compute_marginal_sharpness(y_va, y_range)
@@ -697,26 +703,15 @@ if __name__ == "__main__":
 
     # Create lists of metrics in the local scope for saving
     for list_name in controlled_metric_keys:
-        if list_name.startswith('recal_'):
-            if list_name not in recal_metrics_controlled[0]:
-                save_dic[list_name] = [None for _ in range(len(recal_metrics_controlled))]
-            else:
-                save_dic[list_name] = dictlist_to_listdict(recal_metrics_controlled, list_name)
+        if list_name not in metrics_controlled[0]:
+            save_dic[list_name] = [None for _ in range(len(metrics_controlled))]
         else:
-            if list_name not in metrics_controlled[0]:
-                save_dic[list_name] = [None for _ in range(len(metrics_controlled))]
-            else:
-                save_dic[list_name] = dictlist_to_listdict(metrics_controlled, list_name)
+            save_dic[list_name] = dictlist_to_listdict(metrics_controlled, list_name)
     
     frontier.attach_test_ece_sharpness(save_dic['te_ece_controlled'], save_dic['te_sharp_score_controlled'])
     save_dic['thresholds'], save_dic['va_ece_thresholded'], save_dic['te_ece_thresholded'], \
-    save_dic['va_sharp_score_thresholded'], save_dic['te_sharp_score_thresholded'], save_dic['model_thresholded'] = \
-    frontier.get_thresholded_performance_with_test(args.min_thres, args.max_thres, args.num_thres)
-
-    recal_frontier.attach_test_ece_sharpness(save_dic['recal_te_ece_controlled'], save_dic['recal_te_sharp_score_controlled'])
-    save_dic['recal_thresholds'], save_dic['recal_va_ece_thresholded'], save_dic['recal_te_ece_thresholded'], \
-    save_dic['recal_va_sharp_score_thresholded'], save_dic['recal_te_sharp_score_thresholded'], save_dic['recal_model_thresholded'] = \
-    recal_frontier.get_thresholded_performance_with_test(args.min_thres, args.max_thres, args.num_thres)
+        save_dic['va_sharp_score_thresholded'], save_dic['te_sharp_score_thresholded'], save_dic['model_thresholded'] = \
+        frontier.get_thresholded_performance_with_test(args.min_thres, args.max_thres, args.num_thres)
 
     save_dic['va_exp_props_controlled'] = [torch.linspace(-2.0, 3.0, 501) for _ in range(args.num_thres)]
     save_dic['te_exp_props_controlled'] = [torch.linspace(0.01, 0.99, 99) for _ in range(args.num_thres)]
