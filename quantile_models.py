@@ -442,9 +442,9 @@ def average_calibration(model, X, y, args): # all done
 def mean_variance(model, X, y, args):
     """
     Calculates variance of the conditional distribution using quantiles.
-    E(X) = \int_0^1 q(X, p) dp
-    E(X^2) = \int_0^1 q(X, p)^2 dp
-    Var(X) = E(X^2) - E(X)^2
+    E(Y) = \int_0^1 q(X, p) dp
+    E(Y^2) = \int_0^1 q(X, p)^2 dp
+    Var(Y) = E(Y^2) - E(Y)^2
     as a results ground truth y is not used
     """
     q_list = torch.linspace(0.01, 0.99, 99)
@@ -460,9 +460,9 @@ def mean_variance(model, X, y, args):
 
     pred_y_mat = pred_y.reshape(num_q, num_pts).T
     
-    ex = torch.mean(pred_y_mat, dim=1)
-    ex2 = torch.mean(pred_y_mat**2, dim=1)
-    var = torch.mean(ex2 - ex**2)
+    ey = torch.mean(pred_y_mat, dim=1)
+    ey2 = torch.mean(pred_y_mat**2, dim=1)
+    var = torch.mean(ey2 - ey**2)
 
     return var
 
