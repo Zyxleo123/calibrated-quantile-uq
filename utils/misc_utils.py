@@ -35,7 +35,7 @@ def get_q_idx(exp_props, q):
     target_idx = None
     for idx, x in enumerate(exp_props):
         if idx + 1 == exp_props.shape[0]:
-            if round(q, 2) == round(float(exp_props[-1]), 2):
+            if round(q, 3) == round(float(exp_props[-1]), 3):
                 target_idx = exp_props.shape[0] - 1
             break
         if x <= q < exp_props[idx + 1]:
@@ -47,7 +47,6 @@ def get_q_idx(exp_props, q):
         pdb.set_trace()
         raise ValueError("q must be within exp_props")
     return target_idx
-
 
 def test_uq(
     model,
