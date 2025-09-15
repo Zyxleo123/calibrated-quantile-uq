@@ -88,12 +88,7 @@ def iso_recal(exp_props, obs_props):
     filtered_obs_props = obs_props[beg_idx:end_idx]
     filtered_exp_props = exp_props[beg_idx:end_idx]
 
-    try:
-        iso_model = iso_model.fit(filtered_obs_props, filtered_exp_props)
-    except:
-        import pudb
-
-        pudb.set_trace()
+    iso_model = iso_model.fit(filtered_obs_props.cpu(), filtered_exp_props.cpu())
 
     return iso_model
 
