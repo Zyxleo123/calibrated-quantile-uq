@@ -250,11 +250,16 @@ class QModelEns(uq_model):
     def use_device(self, device):
         self.device = device
         for idx in range(len(self.best_va_model)):
-            self.best_va_model[idx] = self.best_va_model[idx].to(device)
+            if self.best_va_model[idx] is not None:
+                self.best_va_model[idx] = self.best_va_model[idx].to(device)
+        for idx in range(len(self.model)):
+            self.model[idx] = self.model[idx].to(device)
 
         if device.type == "cuda":
             for idx in range(len(self.best_va_model)):
-                assert next(self.best_va_model[idx].parameters()).is_cuda
+                assert self.best_va_model[idx] is None or next(self.best_va_model[idx].parameters()).is_cuda
+            for idx in range(len(self.model)):
+                assert next(self.model[idx].parameters()).is_cuda
 
     def print_device(self):
         device_list = []
@@ -383,10 +388,10 @@ class QModelEns(uq_model):
 
         if self.num_ens == 1:
             with torch.no_grad():
-                pred = self.best_va_model[0](cdf_in)
+                pred = self.model[0](cdf_in)
         if self.num_ens > 1:
             pred_list = []
-            for m in self.best_va_model:
+            for m in self.model:
                 with torch.no_grad():
                     pred_list.append(m(cdf_in).T.unsqueeze(0))
 
@@ -460,40 +465,57 @@ class QModelEns(uq_model):
         pred_mat = torch.cat(cdf_preds, dim=1)  # shape (num_x, num_q)
         assert pred_mat.shape == (num_x, num_q)
         return pred_mat
+    
+    def predict_q(
+        self,
+        x,
+        q_list=None,
+        ens_pred_type="conf",
+        recal_model=None,
+        recal_type=None,
+    ):
+        """
+        Get output for given list of quantiles. (Vectorized Version)
 
-        # ###
-        # cdf_preds = []
-        # for p in q_list:
-        #     if recal_model is not None:
-        #         if recal_type == 'torch':
-        #             recal_model.cpu() # keep recal model on cpu
-        #             with torch.no_grad():
-        #                 in_p = recal_model(p.reshape(1, -1)).item()
-        #         elif recal_type == 'sklearn':
-        #             in_p = float(recal_model.predict(p.flatten()))
-        #         else:
-        #             raise ValueError('recal_type incorrect')
-        #     else:
-        #         in_p = float(p)
-        #     p_tensor = (in_p * torch.ones(num_pts)).reshape(-1, 1)
-        #     cdf_in = torch.cat([x, p_tensor], dim=1).to(self.device)
-        #
-        #     ens_preds_p = []
-        #     with torch.no_grad():
-        #         for m in self.best_va_model:
-        #             cdf_pred = m(cdf_in).reshape(num_pts, -1)
-        #             ens_preds_p.append(cdf_pred.flatten())
-        #
-        #     cdf_preds.append(torch.stack(ens_preds_p, dim=0).unsqueeze(1))
-        # ens_pred_mat = torch.cat(cdf_preds, dim=1).numpy()
-        #
-        # if self.num_ens > 1:
-        #     assert ens_pred_mat.shape == (self.num_ens, num_q, num_pts)
-        #     ens_pred = ens_pred_fn(ens_pred_mat, taus=q_list)
-        # else:
-        #     ens_pred = ens_pred_mat.reshape(num_q, num_pts)
-        # return ens_pred
-        # ###
+        :param x: tensor, of size (num_x, dim_x)
+        :param q_list: flat tensor of quantiles, if None, is set to [0.01, ..., 0.99]
+        :param ens_pred_type:
+        :param recal_model:
+        :param recal_type:
+        :return:
+        """
+        num_x = x.shape[0]
+        
+        if q_list is None:
+            # Ensure q_list is on the correct device from the start
+            q_list = torch.arange(0.01, 1.00, 0.01, device=self.device, dtype=x.dtype)
+        else:
+            q_list = q_list.flatten().to(self.device, dtype=x.dtype)
+        
+        num_q = q_list.shape[0]
+
+        if recal_model is not None:
+            if recal_type == "torch":
+                recal_model.to(q_list.device)
+                with torch.no_grad():
+                    in_q_list = recal_model(q_list.view(-1, 1)).flatten()
+            elif recal_type == "sklearn":
+                q_numpy = q_list.cpu().numpy().reshape(-1, 1)
+                in_q_numpy = recal_model.predict(q_numpy)
+                in_q_list = torch.from_numpy(in_q_numpy).to(self.device).flatten().to(x.dtype)
+            else:
+                raise ValueError("recal_type incorrect")
+        else:
+            in_q_list = q_list
+
+        x_expanded = x.repeat_interleave(num_q, dim=0)
+        p_expanded = in_q_list.repeat(num_x).view(-1, 1)
+        cdf_in_batch = torch.cat([x_expanded, p_expanded], dim=1)
+        all_preds = self.predict(cdf_in_batch)
+        pred_mat = all_preds.view(num_x, num_q)
+
+        assert pred_mat.shape == (num_x, num_q)
+        return pred_mat
 
 
 if __name__ == "__main__":

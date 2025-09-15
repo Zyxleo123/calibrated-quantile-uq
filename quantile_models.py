@@ -314,82 +314,132 @@ def interval_score(model, X, y, args): # all done
 
 
 """ Average Calibration """
-def get_obs_props(model, X, y, exp_props, device, type,  # all done
+
+
+# def get_obs_props(model, X, y, exp_props, device, type,  # all done
+#                   recal_model=None, recal_type='sklearn'):
+#     """
+#     Outputs observed proportions by model per expected proportions
+#     :param model: assumes a torch model (for now)
+#     :param X:
+#     :param y:
+#     :param exp_props:
+#     :param device:
+#     :param recal_model:
+#     :param recal_type:
+#     :return:
+#     """
+
+#     if exp_props is None:
+#         exp_props = torch.linspace(0.01, 0.99, 99, device=device)
+#     else:
+#         exp_props = exp_props.flatten()
+
+#     if type not in ['quantile', 'interval']:
+#         raise ValueError('type must be one of quantile or interval')
+
+#     num_pts = X.size(0)
+#     obs_props = []
+#     cdf_preds = []
+
+#     for p in exp_props:
+#         if recal_model is not None:
+#             if recal_type == 'torch':
+#                 recal_model.cpu()
+#                 with torch.no_grad():
+#                     p = recal_model(p.reshape(1, -1)).item()
+#             elif recal_type == 'sklearn':
+#                 p = float(recal_model.predict(p.flatten()))
+#             else:
+#                 raise ValueError('recal_type incorrect')
+
+#         p_tensor = (p * torch.ones(num_pts, device=device)).reshape(-1, 1).to(device)
+#         cdf_in = torch.cat([X, p_tensor], dim=1)
+
+#         with torch.no_grad():
+#             cdf_pred = model.predict(cdf_in).reshape(num_pts, -1)
+
+#         # store cdf prediction at each quantile, regardless of type
+#         cdf_preds.append(cdf_pred)
+
+#         if type == 'quantile':
+#             # prop = torch.mean((y <= cdf_pred).float())
+#             prop = torch.mean((y <= cdf_pred).float())
+#             obs_props.append(prop)
+#         elif type == 'interval':
+#             lower_p = 0.5 - (p/2.0)
+#             upper_p = 0.5 + (p/2.0)
+#             if not (float(upper_p - lower_p) - float(p) < 1e-5):
+#                 import pudb; pudb.set_trace()
+
+#             lower_p_tensor = (lower_p * torch.ones(num_pts, device=device)).reshape(-1, 1).to(
+#                 device)
+#             upper_p_tensor = (upper_p * torch.ones(num_pts, device=device)).reshape(-1, 1).to(
+#                 device)
+
+#             with torch.no_grad():
+#                 lower_cdf_pred = model.predict(torch.cat([X, lower_p_tensor],
+#                                                dim=1)).reshape(num_pts, -1)
+#                 upper_cdf_pred = model.predict(torch.cat([X, upper_p_tensor],
+#                                                dim=1)).reshape(num_pts, -1)
+
+#             above_lower = (lower_cdf_pred <= y).float()
+#             below_upper = (y <= upper_cdf_pred).float()
+#             prop = torch.mean(above_lower * below_upper)
+#             obs_props.append(prop.item())
+
+#     cdf_preds = torch.cat(cdf_preds, dim=1).T  # shape (num_quantiles, num_pts)...most likely (99, num_pts)
+#     obs_props = torch.tensor(obs_props, device=device)  # flat tensor of props
+
+#     return exp_props, obs_props, cdf_preds
+
+def get_obs_props(model, X, y, exp_props, device, type,
                   recal_model=None, recal_type='sklearn'):
     """
     Outputs observed proportions by model per expected proportions
-    :param model: assumes a torch model (for now)
-    :param X:
-    :param y:
-    :param exp_props:
-    :param device:
-    :param recal_model:
-    :param recal_type:
-    :return:
     """
-
     if exp_props is None:
         exp_props = torch.linspace(0.01, 0.99, 99, device=device)
     else:
         exp_props = exp_props.flatten()
 
-    if type not in ['quantile', 'interval']:
-        raise ValueError('type must be one of quantile or interval')
+    if type != 'quantile':
+        raise NotImplementedError("Vectorized version is only implemented for type='quantile'")
+
+
+    if recal_model is not None:
+        if recal_type == "torch":
+            recal_model.to(exp_props.device)
+            with torch.no_grad():
+                exp_props_in = recal_model(exp_props.view(-1, 1)).flatten()
+        elif recal_type == "sklearn":
+            exp_props_in = exp_props.cpu().numpy().reshape(-1, 1)
+            exp_props_in = recal_model.predict(exp_props_in)
+            exp_props_in = torch.from_numpy(exp_props_in).to(device).flatten().to(X.dtype)
+        else:
+            raise ValueError("recal_type incorrect")
+    else:
+        exp_props_in = exp_props
 
     num_pts = X.size(0)
-    obs_props = []
-    cdf_preds = []
+    num_q = exp_props_in.size(0)
 
-    for p in exp_props:
-        if recal_model is not None:
-            if recal_type == 'torch':
-                recal_model.cpu()
-                with torch.no_grad():
-                    p = recal_model(p.reshape(1, -1)).item()
-            elif recal_type == 'sklearn':
-                p = float(recal_model.predict(p.flatten()))
-            else:
-                raise ValueError('recal_type incorrect')
+    X_expanded = X.repeat_interleave(num_q, dim=0)
+    p_expanded = exp_props_in.repeat(num_pts).view(-1, 1)
+    cdf_in_batch = torch.cat([X_expanded, p_expanded], dim=1)
 
-        p_tensor = (p * torch.ones(num_pts, device=device)).reshape(-1, 1).to(device)
-        cdf_in = torch.cat([X, p_tensor], dim=1)
+    with torch.no_grad():
+        all_preds = model.predict(cdf_in_batch)
 
-        with torch.no_grad():
-            cdf_pred = model.predict(cdf_in).reshape(num_pts, -1)
+    preds_reshaped = all_preds.view(num_pts, num_q)
+    
+    is_below = (y <= preds_reshaped)
 
-        # store cdf prediction at each quantile, regardless of type
-        cdf_preds.append(cdf_pred)
+    obs_props = torch.mean(is_below.float(), dim=0)
 
-        if type == 'quantile':
-            prop = torch.mean((y <= cdf_pred).float())
-            obs_props.append(prop.item())
-        elif type == 'interval':
-            lower_p = 0.5 - (p/2.0)
-            upper_p = 0.5 + (p/2.0)
-            if not (float(upper_p - lower_p) - float(p) < 1e-5):
-                import pudb; pudb.set_trace()
-
-            lower_p_tensor = (lower_p * torch.ones(num_pts, device=device)).reshape(-1, 1).to(
-                device)
-            upper_p_tensor = (upper_p * torch.ones(num_pts, device=device)).reshape(-1, 1).to(
-                device)
-
-            with torch.no_grad():
-                lower_cdf_pred = model.predict(torch.cat([X, lower_p_tensor],
-                                               dim=1)).reshape(num_pts, -1)
-                upper_cdf_pred = model.predict(torch.cat([X, upper_p_tensor],
-                                               dim=1)).reshape(num_pts, -1)
-
-            above_lower = (lower_cdf_pred <= y).float()
-            below_upper = (y <= upper_cdf_pred).float()
-            prop = torch.mean(above_lower * below_upper)
-            obs_props.append(prop.item())
-
-    cdf_preds = torch.cat(cdf_preds, dim=1).T  # shape (num_quantiles, num_pts)...most likely (99, num_pts)
-    obs_props = torch.tensor(obs_props, device=device)  # flat tensor of props
-
+    cdf_preds = preds_reshaped.T
+    
     return exp_props, obs_props, cdf_preds
-
 
 def average_calibration(model, X, y, args): # all done
     """
