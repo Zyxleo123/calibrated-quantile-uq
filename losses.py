@@ -337,3 +337,9 @@ def batch_interval_loss(model, y, x, q_list, device, args):
     )
 
     return torch.mean(loss)
+
+
+def mse_loss_fn(model, y, x, q_list, device, args):
+    pred = model(x)
+    loss = torch.nn.functional.mse_loss(y, pred)
+    return loss

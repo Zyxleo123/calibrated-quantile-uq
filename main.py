@@ -18,7 +18,7 @@ from utils.misc_utils import (
     compute_marginal_sharpness
 )
 from recal import iso_recal
-from utils.q_model_ens import QModelEns
+from utils.q_model_ens import QModelEns, EnhancedMLP
 from losses import (
     cali_loss,
     batch_cali_loss,
@@ -26,9 +26,10 @@ from losses import (
     batch_qr_loss,
     interval_loss,
     batch_interval_loss,
+    mse_loss_fn
 )
 from quantile_models import average_calibration, bag_nll, crps_score, mpiw, interval_score, check_loss, mean_variance
-
+from uci_model_agn import main as maqr_main
 
 def get_loss_fn(loss_name):
     if loss_name == "qr":
@@ -53,7 +54,8 @@ def get_loss_fn(loss_name):
         fn = interval_loss
     elif loss_name == "batch_int":
         fn = batch_interval_loss
-
+    elif loss_name == "maqr":
+        fn = mse_loss_fn
     else:
         raise ValueError("loss arg not valid")
 
@@ -185,7 +187,10 @@ def parse_args():
         "--skip_existing", type=int, default=1, help="1 to skip existing results"
     )
     parser.add_argument("--debug", type=int, default=0, help="1 to debug")
-
+    
+    # MAQR-specific arguments
+    parser.add_argument("--dist_type", type=str, default="kernel", help="distance type for MAQR")
+    parser.add_argument("--num_in_bin", type=int, default=40, help="number of points in bin for MAQR")
     args = parser.parse_args()
 
     if "penalty" in args.loss:
@@ -319,46 +324,70 @@ if __name__ == "__main__":
     )
     y_range = (y_al.max() - y_al.min()).item()
 
-    # Making models
-    num_tr = x_tr.shape[0]
-    dim_x = x_tr.shape[1]
-    dim_y = y_tr.shape[1]
-    model_ens = QModelEns(
-        input_size=dim_x + 1,
-        output_size=dim_y,
-        hidden_size=args.hs,
-        num_layers=args.nl,
-        lr=args.lr,
-        wd=args.wd,
-        num_ens=args.num_ens,
-        device=args.device,
-        residual=args.residual,
-        batch_norm=args.batch_norm,
-        layer_norm=args.layer_norm,
-        dropout=args.dropout,
-        activation=args.activation,
-    )
-
-    # Data loader
-    if not args.boot:
-        loader = DataLoader(
-            TensorDataset(x_tr, y_tr),
-            shuffle=True,
-            batch_size=args.bs,
+    # Check if using MAQR approach
+    if args.loss == 'maqr':
+        # Use MAQR training procedure from uci_model_agn.py
+        dim_y = y_tr.shape[1]
+        args.mean_model = EnhancedMLP
+        args.mean_model_args = {
+            "output_size": dim_y,
+            "hidden_size": args.hs,
+            "num_layers": args.nl,
+            "residual": args.residual,
+            "batch_norm": args.batch_norm,
+            "layer_norm": args.layer_norm,
+            "dropout": args.dropout,
+            "activation": args.activation,
+        }
+        model_ens, loader, cdf_x_va_tensor, cdf_y_va_tensor, pred_mean_va, pred_mean_te = maqr_main(
+            from_main_py=True, args=args
         )
+        
+        # For MAQR, we need to center the targets for evaluation
+        y_va_centered = y_va - torch.from_numpy(pred_mean_va).to(y_va.device)
+        y_te_centered = y_te - torch.from_numpy(pred_mean_te).to(y_te.device)
     else:
-        rand_idx_list = [
-            np.random.choice(num_tr, size=num_tr, replace=True)
-            for _ in range(args.num_ens)
-        ]
-        loader_list = [
-            DataLoader(
-                TensorDataset(x_tr[idxs], y_tr[idxs]),
+        # y_va_centered = None
+        # y_te_centered = None
+        num_tr = x_tr.shape[0]
+        dim_x = x_tr.shape[1]
+        dim_y = y_tr.shape[1]
+        model_ens = QModelEns(
+            input_size=dim_x + 1,
+            output_size=dim_y,
+            hidden_size=args.hs,
+            num_layers=args.nl,
+            lr=args.lr,
+            wd=args.wd,
+            num_ens=args.num_ens,
+            device=args.device,
+            residual=args.residual,
+            batch_norm=args.batch_norm,
+            layer_norm=args.layer_norm,
+            dropout=args.dropout,
+            activation=args.activation,
+        )
+
+        # Data loader
+        if not args.boot:
+            loader = DataLoader(
+                TensorDataset(x_tr, y_tr),
                 shuffle=True,
                 batch_size=args.bs,
             )
-            for idxs in rand_idx_list
-        ]
+        else:
+            rand_idx_list = [
+                np.random.choice(num_tr, size=num_tr, replace=True)
+                for _ in range(args.num_ens)
+            ]
+            loader_list = [
+                DataLoader(
+                    TensorDataset(x_tr[idxs], y_tr[idxs]),
+                    shuffle=True,
+                    batch_size=args.bs,
+                )
+                for idxs in rand_idx_list
+            ]
 
     # Loss function
     loss_fn = get_loss_fn(args.loss)
@@ -386,57 +415,63 @@ if __name__ == "__main__":
         # Take train step
         # list of losses from each batch, for one epoch
         ep_train_loss = []
-        if not args.boot:
-            if ep % args.draw_group_every == 0:
-                # drawing a group batch
-                group_idxs = group_list[curr_group_idx]
-                curr_group_idx = (curr_group_idx + 1) % dim_x
-                for g_idx in group_idxs:
-                    xi = x_tr[g_idx.flatten()].to(args.device)
-                    yi = y_tr[g_idx.flatten()].to(args.device)
-                    q_list = torch.rand(args.num_q)
-                    loss = model_ens.loss(
-                        loss_fn,
-                        xi,
-                        yi,
-                        q_list,
-                        batch_q=batch_loss,
-                        take_step=True,
-                        args=args,
-                    )
-                    ep_train_loss.append(loss)
-            else:
-                # just doing ordinary random batch
-                for (xi, yi) in loader:
-                    xi, yi = xi.to(args.device), yi.to(args.device)
-                    q_list = torch.rand(args.num_q)
-                    loss = model_ens.loss(
-                        loss_fn,
-                        xi,
-                        yi,
-                        q_list,
-                        batch_q=batch_loss,
-                        take_step=True,
-                        args=args,
-                    )
-                    ep_train_loss.append(loss)
-        else:
-            # bootstrapped ensemble of models
-            for xi_yi_samp in zip(*loader_list):
-                xi_list = [item[0].to(args.device) for item in xi_yi_samp]
-                yi_list = [item[1].to(args.device) for item in xi_yi_samp]
-                assert len(xi_list) == len(yi_list) == args.num_ens
-                q_list = torch.rand(args.num_q)
-                loss = model_ens.loss_boot(
-                    loss_fn,
-                    xi_list,
-                    yi_list,
-                    q_list,
-                    batch_q=batch_loss,
-                    take_step=True,
-                    args=args,
-                )
+        if args.loss == 'maqr':
+            for (xi, yi) in loader:
+                xi, yi = xi.to(args.device), yi.to(args.device)
+                loss = model_ens.loss(mse_loss_fn, xi, yi, q_list=None, batch_q=True, take_step=True, args=args)
                 ep_train_loss.append(loss)
+        else:
+            if not args.boot:
+                if ep % args.draw_group_every == 0:
+                    # drawing a group batch
+                    group_idxs = group_list[curr_group_idx]
+                    curr_group_idx = (curr_group_idx + 1) % dim_x
+                    for g_idx in group_idxs:
+                        xi = x_tr[g_idx.flatten()].to(args.device)
+                        yi = y_tr[g_idx.flatten()].to(args.device)
+                        q_list = torch.rand(args.num_q)
+                        loss = model_ens.loss(
+                            loss_fn,
+                            xi,
+                            yi,
+                            q_list,
+                            batch_q=batch_loss,
+                            take_step=True,
+                            args=args,
+                        )
+                        ep_train_loss.append(loss)
+                else:
+                    # just doing ordinary random batch
+                    for (xi, yi) in loader:
+                        xi, yi = xi.to(args.device), yi.to(args.device)
+                        q_list = torch.rand(args.num_q)
+                        loss = model_ens.loss(
+                            loss_fn,
+                            xi,
+                            yi,
+                            q_list,
+                            batch_q=batch_loss,
+                            take_step=True,
+                            args=args,
+                        )
+                        ep_train_loss.append(loss)
+            else:
+                # bootstrapped ensemble of models
+                for xi_yi_samp in zip(*loader_list):
+                    xi_list = [item[0].to(args.device) for item in xi_yi_samp]
+                    yi_list = [item[1].to(args.device) for item in xi_yi_samp]
+                    assert len(xi_list) == len(yi_list) == args.num_ens
+                    q_list = torch.rand(args.num_q)
+                    loss = model_ens.loss_boot(
+                        loss_fn,
+                        xi_list,
+                        yi_list,
+                        q_list,
+                        batch_q=batch_loss,
+                        take_step=True,
+                        args=args,
+                    )
+                    ep_train_loss.append(loss)
         ep_tr_loss = np.nanmean(np.stack(ep_train_loss, axis=0), axis=0)
         tr_loss_list.append(ep_tr_loss)
 
@@ -445,10 +480,10 @@ if __name__ == "__main__":
         va_te_q_list = torch.linspace(0.01, 0.99, 99).to(args.device)
         ep_va_loss = model_ens.update_va_loss(
             loss_fn,
-            x_va,
-            y_va,
-            va_te_q_list,
-            batch_q=batch_loss,
+            x_va if args.loss != 'maqr' else cdf_x_va_tensor.to(args.device),
+            y_va if args.loss != 'maqr' else cdf_y_va_tensor.to(args.device),
+            va_te_q_list if args.loss != 'maqr' else None,
+            batch_q=batch_loss if args.loss != 'maqr' else True,
             curr_ep=ep,
             num_wait=args.wait,
             args=args,
@@ -466,7 +501,7 @@ if __name__ == "__main__":
         ece = average_calibration(
             model_ens,
             x_va.to(validation_device),
-            y_va.to(validation_device),
+            (y_va if args.loss != 'maqr' else y_va_centered).to(validation_device),
             args=Namespace(
                 exp_props=va_te_q_list.to(validation_device),
                 device=validation_device,
@@ -480,7 +515,7 @@ if __name__ == "__main__":
         sharp_score, _ = test_uq(
             model_ens,
             x_va.to(validation_device),
-            y_va.to(validation_device),
+            (y_va if args.loss != 'maqr' else y_va_centered).to(validation_device),
             va_te_q_list.to(validation_device),
             y_range,
             recal_model=None,
@@ -508,6 +543,10 @@ if __name__ == "__main__":
         y_te.to(testing_device),
     )
     model_ens.use_device(testing_device)
+
+    if args.loss == 'maqr':
+        y_va = y_va_centered.to(testing_device)
+        y_te = y_te_centered.to(testing_device)
 
     # Test UQ on val
     va_exp_props_recal = torch.linspace(-2.0, 3.0, 501, device=testing_device)
