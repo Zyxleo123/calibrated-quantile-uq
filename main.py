@@ -233,11 +233,6 @@ if __name__ == "__main__":
 
     # print("DEVICE: {}".format(args.device))
 
-    if args.debug:
-        import pudb
-
-        pudb.set_trace()
-
     if not os.path.exists(args.save_dir):
         os.makedirs(args.save_dir)
 
@@ -378,7 +373,18 @@ if __name__ == "__main__":
     group_list = discretize_domain(x_tr.numpy(), args.bs)
     curr_group_idx = 0
 
-    for ep in range(args.num_ep):
+    # validation_device = torch.device("cpu")
+    validation_device = args.device
+    x_va_validation_device, y_va_validation_device = x_va.to(validation_device), y_va.to(validation_device)
+    ece_q_list_validation_device = torch.linspace(0.01, 0.99, 99).to(validation_device)
+    sharpness_q_list_validation_device = torch.tensor([0.025, 0.975], device=validation_device)
+    print(args.device)
+
+    if args.debug:
+        tqdm_out = sys.stdout
+    else:
+        tqdm_out = open(os.path.join(os.environ['SCRATCH'], 'tqdm', save_file_name), 'w', buffering=1)
+    for ep in tqdm.tqdm(range(args.num_ep), file=tqdm_out, mininterval=1.0):
         if model_ens.done_training:
             print("Done training ens at EP {}".format(ep))
             break
@@ -441,34 +447,27 @@ if __name__ == "__main__":
         tr_loss_list.append(ep_tr_loss)
 
         # Validation loss
-        x_va, y_va = x_va.to(args.device), y_va.to(args.device)
-        va_te_q_list = torch.linspace(0.01, 0.99, 99).to(args.device)
-        ep_va_loss = model_ens.update_va_loss(
-            loss_fn,
-            x_va,
-            y_va,
-            va_te_q_list,
-            batch_q=batch_loss,
-            curr_ep=ep,
-            num_wait=args.wait,
-            args=args,
-        )
-        va_loss_list.append(ep_va_loss)
-
-        # Printing some losses
-        if (ep % 200 == 0) or (ep == args.num_ep - 1):
-            print(f"{vars(args)} EP:{ep}")
-            # print("Train loss {}".format(ep_tr_loss))
-            # print("Val loss {}".format(ep_va_loss))
-
-        validation_device = torch.device("cpu")
         model_ens.use_device(validation_device)
+        # x_va, y_va = x_va.to(validation_device), y_va.to(validation_device)
+        # va_te_q_list = torch.linspace(0.01, 0.99, 99).to(validation_device)
+        # ep_va_loss = model_ens.update_va_loss(
+        #     loss_fn,
+        #     x_va,
+        #     y_va,
+        #     va_te_q_list,
+        #     batch_q=batch_loss,
+        #     curr_ep=ep,
+        #     num_wait=args.wait,
+        #     args=args,
+        # )
+        # va_loss_list.append(ep_va_loss)
+
         ece = average_calibration(
             model_ens,
-            x_va.to(validation_device),
-            y_va.to(validation_device),
+            x_va_validation_device,
+            y_va_validation_device,
             args=Namespace(
-                exp_props=va_te_q_list.to(validation_device),
+                exp_props=ece_q_list_validation_device,
                 device=validation_device,
                 metric="cal_q"
             )
@@ -479,9 +478,9 @@ if __name__ == "__main__":
 
         sharp_score, _ = test_uq(
             model_ens,
-            x_va.to(validation_device),
-            y_va.to(validation_device),
-            va_te_q_list.to(validation_device),
+            x_va_validation_device,
+            y_va_validation_device,
+            sharpness_q_list_validation_device,
             y_range,
             recal_model=None,
             recal_type=None,
@@ -494,10 +493,6 @@ if __name__ == "__main__":
 
         frontier.insert(ece, sharp_score, deepcopy(model_ens), only_frontier=True)
 
-    # Finished training
-    # print(f"Total of {len(frontier.entries)} frontier entries recorded.")
-
-    # Move everything to testing device
     testing_device = torch.device('cpu')
     x_tr, y_tr, x_va, y_va, x_te, y_te = (
         x_tr.to(testing_device),
@@ -618,7 +613,7 @@ if __name__ == "__main__":
         )
 
     metrics_controlled = []
-    for entry in frontier.get_entries():
+    for entry in tqdm.tqdm(frontier.get_entries(), file=tqdm_out, mininterval=1.0):
         controlled_model_ens = entry['model']
         current_metrics_tmp = {}
         current_metrics_tmp['model_controlled'] = controlled_model_ens
@@ -681,7 +676,6 @@ if __name__ == "__main__":
             current_metrics_tmp['recal_te_check_controlled'] = float(check_loss(controlled_model_ens, x_te, y_te, args_for_score))
             current_metrics_tmp['recal_te_variance_controlled'] = float(mean_variance(controlled_model_ens, x_te, y_te, args_for_score))
         metrics_controlled.append(current_metrics_tmp)
-
     # Compute marginal sharpness of the target variable
     va_marginal_sharpness = compute_marginal_sharpness(y_va, y_range)
     te_marginal_sharpness = compute_marginal_sharpness(y_te, y_range)
@@ -744,3 +738,4 @@ if __name__ == "__main__":
     with open(save_file_name, "wb") as pf:
         pkl.dump(save_dic, pf)
     print(f"Results saved to {save_file_name}")
+    tqdm_out.close()
