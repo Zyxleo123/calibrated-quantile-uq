@@ -15,7 +15,7 @@ import math
 import pandas as pd
 
 RESULTS_BASE_DIR = os.path.join(os.environ['SCRATCH'], "results")
-BASELINE_NAMES = ['batch_qr', 'batch_cal', 'batch_int']
+BASELINE_NAMES = ['batch_cal', 'batch_int', 'batch_qr']
 FALLBACK_MAX_THRESHOLDS = 150
 
 
@@ -34,9 +34,9 @@ def lump(all_points, window_frac=0.05):
         df['lower'] = df['y'].expanding(min_periods=1).quantile(0.1)
     else:
         window_size = max(1, int(len(df) * window_frac))
-        df['median'] = df['y'].rolling(window=window_size, min_periods=1, center=True).median()
-        df['upper'] = df['y'].rolling(window=window_size, min_periods=1, center=True).quantile(0.9)
-        df['lower'] = df['y'].rolling(window=window_size, min_periods=1, center=True).quantile(0.1)
+        df['median'] = df['y'].rolling(window=window_size, min_periods=window_size, center=True).median()
+        df['upper'] = df['y'].rolling(window=window_size, min_periods=window_size, center=True).quantile(0.9)
+        df['lower'] = df['y'].rolling(window=window_size, min_periods=window_size, center=True).quantile(0.1)
 
     median_line = list(zip(df['x'], df['median']))
     upper_line = list(zip(df['x'], df['upper']))
@@ -83,7 +83,7 @@ def aggregate_seeds_median(seed_pkls, quantile=0.5, prefix=''):
     all_points.sort(key=lambda p: p[0])
 
     # 3. Lump the points to get the median curve using an expanding window
-    median_line, _, _ = lump(all_points, window_frac=0.0)
+    median_line, _, _ = lump(all_points)
 
     # 4. Convert the median line into the dictionary format expected by downstream functions
     lumped_metrics = {}
@@ -102,10 +102,13 @@ def plot_sharpness_vs_ece(ax, threshold_to_metrics, baseline_name, prefix=''):
         print(f"  - No data to plot for Sharpness vs. ECE (baseline: {baseline_name})")
         return
 
+    colors = plt.get_cmap('viridis', len(BASELINE_NAMES))
+    markers = ['o', 's', '^', 'D', 'v', '<', '>'] 
     te_ece = [d[f'{prefix}te_ece'] for d in threshold_to_metrics.values()]
+    baseline_idx = BASELINE_NAMES.index(baseline_name)
     te_sharp = [d[f'{prefix}te_sharp_score'] for d in threshold_to_metrics.values()]
-    
-    ax.scatter(te_ece, te_sharp, label=baseline_name, alpha=0.7, s=10)
+
+    ax.scatter(te_ece, te_sharp, label=baseline_name, alpha=0.7, s=50, color=colors(baseline_idx), marker=markers[baseline_idx % len(markers)])
     # The original implementation had threshold annotations, which are no longer applicable
     # with the new lumping method. The scatter plot remains the primary visualization.
 
