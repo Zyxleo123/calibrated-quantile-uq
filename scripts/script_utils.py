@@ -111,13 +111,13 @@ BASIC_INPUTS = {
     "max_thres": 0.15,
     "num_thres": 150,
     "wait": 100000,
+	"num_ep": 1000,
 }
 
 DEFAULT_VALUE = {
     "num_ens": 1,
     "nl": 2,
     "hs": 64,
-    # "residual": 0,
     "batch_norm": 0,
     "layer_norm": 0,
     "dropout": 0.0,
@@ -138,7 +138,7 @@ TEST_HYPERPARAMS = {
     "hs": [32, 64],
     "residual": [1],
     "seed": [0, 1, 2],
-    "loss": ["batch_qr", "batch_int"],
+    "loss": ["maqr", "batch_qr"],
 	"num_ep": [300],
     # "loss": ["batch_qr"]
 }
@@ -162,7 +162,8 @@ FULL_HYPERPARAMS = {
     "hs": [256, 32, 64, 128],
     "residual": [1],
     "seed": [0, 1, 2, 3, 4],
-    "loss": ["batch_qr", "batch_int", "batch_cal"],
+    # "loss": ["maqr", "batch_qr", "batch_int", "batch_cal"],
+    "loss": ["maqr"]
 }
 
 NL_HS_COMBINATIONS = [
@@ -227,18 +228,20 @@ def fix_inputs(inputs: Dict) -> Dict:
 	For example, if num_ens=1, set boot=0.
 	"""
 	new_inputs = inputs.copy()
-	if new_inputs.get("num_ens", 1) == 1:
+	if inputs["num_ens"] == 1:
 		new_inputs["boot"] = 0
+	if inputs["loss"] == "maqr":
+		new_inputs["num_ep"] = inputs["num_ep"] // 40
 	return new_inputs
 
 def invalid_inputs(inputs: Dict) -> bool:
 	"""
 	Return True if the job configuration should be skipped based on constraints.
 	"""
-	if inputs.get("batch_norm", 0) == 1 and inputs.get("layer_norm", 0) == 1:
+	if inputs["batch_norm"] == 1 and inputs["layer_norm"] == 1:
 		return True
-	if inputs.get("num_ens", 1) == 1 and inputs.get("boot", 0) == 1:
+	if inputs["num_ens"] == 1 and inputs["boot"] == 1:
 		return True
-	if (inputs.get("nl", 2), inputs.get("hs", 64)) not in NL_HS_COMBINATIONS:
+	if (inputs["nl"], inputs["hs"]) not in NL_HS_COMBINATIONS:
 		return True
 	return False
