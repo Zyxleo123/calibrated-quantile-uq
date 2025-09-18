@@ -75,6 +75,8 @@ def main():
         while job_pool and len(job_status) < MAX_JOBS:
             # Check/fix inputs
             inputs = job_pool.popleft()
+            inputs.update(BASIC_INPUTS)
+            inputs = fix_inputs(inputs)
             if invalid_inputs(inputs):
                 continue
 
@@ -84,7 +86,6 @@ def main():
                 if job_name is None:
                     continue
             if script_args.test:
-                inputs["num_ep"] = 300
                 job_name = "test"
             job_dir = os.path.join(RESULT_BASE, script_args.name, inputs["data"], job_name)
             BASIC_INPUTS["save_dir"] = job_dir
@@ -97,7 +98,6 @@ def main():
 
             try:
                 inputs["gpu"] = free_gpu
-                inputs.update(BASIC_INPUTS)
                 pkl_path = get_save_file_name(inputs)
                 # Launch process asynchronously and store in dict
                 proc = run_main(inputs)
