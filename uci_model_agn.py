@@ -503,7 +503,6 @@ def main(from_main_py=False, args=None):
         per_seed_recal_sharp = []
         
         for s in tqdm.tqdm(SEEDS):
-            print(f"Seed: {s}")
             """ set seed """
             seed = s
             reset_seeds(seed)

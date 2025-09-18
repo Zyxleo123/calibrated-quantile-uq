@@ -5,3 +5,4 @@ utils/NNKit/*
 results
 *.pkl
 *.txt
+data/new_datasets_raw
