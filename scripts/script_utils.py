@@ -145,7 +145,7 @@ TEST_HYPERPARAMS = {
 
 FULL_HYPERPARAMS = {
     "skip_existing": [1],
-    "data": ["boston", "concrete", "energy", "kin8nm", "naval", "power", "protein", "wine", "yacht"],
+    "data": ["boston", "concrete", "energy", "kin8nm", "naval", "power", "wine", "yacht", "protein"],
     "lr": [1e-3],
     "bs": [64],
     # "batch_norm": [0, 1],
