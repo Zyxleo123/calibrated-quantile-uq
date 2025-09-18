@@ -68,20 +68,23 @@ def load_and_extract_data(pkl_paths, x_key, y_key):
     all_points.sort(key=lambda p: p[0])
     return all_points
 
-def lump(all_points, window_frac=0.05):
+def lump(all_points, window_size=None, window_frac=None):
     """
     Calculates moving median and quantiles on a set of points for visualization.
     """
+    if (window_size is not None and window_frac is not None):
+        raise ValueError("Cannot specify both window_size and window_frac.")
+
     df = pd.DataFrame(all_points, columns=['x', 'y'])
     if df.empty:
         return [], [], []
         
-    if window_frac == 0.0:
+    if window_size is None and window_frac is None:
         df['median'] = df['y'].expanding(min_periods=1).median()
         df['upper'] = df['y'].expanding(min_periods=1).quantile(0.9)
         df['lower'] = df['y'].expanding(min_periods=1).quantile(0.1)
     else:
-        window_size = max(1, int(len(df) * window_frac))
+        window_size = window_size if window_size is not None else max(1, int(len(df) * window_frac))
         df['median'] = df['y'].rolling(window=window_size, min_periods=window_size, center=True).median()
         df['upper'] = df['y'].rolling(window=window_size, min_periods=window_size, center=True).quantile(0.9)
         df['lower'] = df['y'].rolling(window=window_size, min_periods=window_size, center=True).quantile(0.1)
@@ -243,9 +246,9 @@ def run_analysis_1(run_name_path, x_key, y_key):
             best_pkls = hyperparam_pkls_for_scoring[best_hyper_dir_name]
             best_hyperparam_pkls_by_baseline[baseline].extend(best_pkls)
 
-    lumped_data_for_plot = {b: lump(load_and_extract_data(p, x_key, y_key), window_frac=window_frac) for b, p in best_hyperparam_pkls_by_baseline.items()}
+    lumped_data_for_plot = {b: lump(load_and_extract_data(p, x_key, y_key), window_frac=window_frac, window_size=window_size) for b, p in best_hyperparam_pkls_by_baseline.items()}
     avg_distance_scores = calculate_avg_distance_to_front(best_hyperparam_pkls_by_baseline, x_key, y_key)
-    output_dir = os.path.join(run_name_path, f"best_hyperparams_all_datasets_w{window_frac:.2f}")
+    output_dir = os.path.join(run_name_path, f"best_hyperparams_all_datasets_w{window_frac if window_frac is not None else window_size}")
     output_path = os.path.join(output_dir, f"{y_key}_result.png")
     plot_results(lumped_data_for_plot, y_key, output_path, f"Best Hyperparameters - {y_key}", avg_distance_scores)
 
@@ -256,9 +259,9 @@ def run_analysis_3(run_name_path, x_key, y_key):
     for dataset_path in tqdm(valid_dataset_dirs, desc="Analysis 3: Lumping by dataset"):
         dataset_name = os.path.basename(os.path.normpath(dataset_path))
         all_pkls_by_baseline = {b: glob.glob(os.path.join(dataset_path, "*", f"*{b}*.pkl")) for b in BASELINES}
-        lumped_data = {b: lump(load_and_extract_data(p, x_key, y_key), window_frac=window_frac) for b, p in all_pkls_by_baseline.items()}
+        lumped_data = {b: lump(load_and_extract_data(p, x_key, y_key), window_frac=window_frac, window_size=window_size) for b, p in all_pkls_by_baseline.items()}
         avg_scores = calculate_avg_distance_to_front(all_pkls_by_baseline, x_key, y_key)
-        output_dir = os.path.join(run_name_path, f"all_hyperparams_per_dataset_w{window_frac:.2f}", dataset_name)
+        output_dir = os.path.join(run_name_path, f"all_hyperparams_per_dataset_w{window_frac if window_frac is not None else window_size}", dataset_name)
         output_path = os.path.join(output_dir, f"{y_key}_result.png")
         plot_results(lumped_data, y_key, output_path, f"All Hyperparameters on {dataset_name} - {y_key}", avg_scores)
 
@@ -273,19 +276,24 @@ def run_analysis_4(run_name_path, x_key, y_key):
             pattern = os.path.join(dataset_path, "*", f"*{baseline}*.pkl")
             all_pkls_by_baseline[baseline].extend(glob.glob(pattern))
 
-    lumped_data = {b: lump(load_and_extract_data(p, x_key, y_key), window_frac=window_frac) for b, p in all_pkls_by_baseline.items()}
+    lumped_data = {b: lump(load_and_extract_data(p, x_key, y_key), window_frac=window_frac, window_size=window_size) for b, p in all_pkls_by_baseline.items()}
     avg_scores = calculate_avg_distance_to_front(all_pkls_by_baseline, x_key, y_key)
-    output_dir = os.path.join(run_name_path, f"global_all_datasets_w{window_frac:.2f}")
+    output_dir = os.path.join(run_name_path, f"all_models_all_datasets_w{window_frac if window_frac is not None else window_size}")
     output_path = os.path.join(output_dir, f"{y_key}_results.png")
     plot_results(lumped_data, y_key, output_path, f"Global Performance - {y_key}", avg_scores)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Lump and plot experiment results using average distance to Pareto front.")
     parser.add_argument("-n", "--run_name", type=str, required=True, help="The name of the run directory under RESULTS_PREFIX.")
-    parser.add_argument("--window_frac", '-w', type=float, default=0.05, help="Fraction of data for moving window in lumping.")
+    parser.add_argument("--window_frac", '-w', type=float, help="Fraction of data for moving window in lumping.")
+    parser.add_argument("--window_size", '-ws', type=int, help="Size of the moving window in lumping.")
     args = parser.parse_args()
 
     window_frac = args.window_frac
+    window_size = args.window_size
+    if (window_frac is not None and window_size is not None) or (window_frac is None and window_size is None):
+        raise ValueError("Specify exactly one of --window_frac or --window_size.")
+
     run_name_path = os.path.join(RESULTS_PREFIX, args.run_name)
     if not os.path.isdir(run_name_path):
         print(f"Error: Run directory not found at {run_name_path}")
