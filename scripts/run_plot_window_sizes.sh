@@ -8,11 +8,17 @@ if [ -z "$2" ] || ([ "$1" != "-n" ] && [ "$1" != "--exp_name" ]); then
 fi
 
 NAME=$2
-WINDOW_SIZES=(0.05 0.1 0.2 0.3)
+WINDOW_FRACS=(0.05 0.1 0.2 0.3)
+WINDOW_SIZES=(50 100 200)
 
-for W in "${WINDOW_SIZES[@]}"; do
-    echo "Running plot_lump.py with -n $NAME -w $W"
-    python plots/plot_lump.py -n "$NAME" -w "$W"
+# for W in "${WINDOW_FRACS[@]}"; do
+#     echo "Running plot_lump.py with -n $NAME -w $W"
+#     python plots/plot_lump.py -n "$NAME" -w "$W"
+# done
+
+for ws in "${WINDOW_SIZES[@]}"; do
+    echo "Running plot_lump.py with -n $NAME -ws $ws"
+    python plots/plot_lump.py -n "$NAME" -ws "$ws"
 done
 
 echo "All plotting tasks complete."
