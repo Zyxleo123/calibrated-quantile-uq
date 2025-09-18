@@ -429,7 +429,17 @@ def get_obs_props(model, X, y, exp_props, device, type,
     cdf_in_batch = torch.cat([X_expanded, p_expanded], dim=1)
 
     with torch.no_grad():
-        all_preds = model.predict(cdf_in_batch)
+        num_parts = 20
+        size_parts = len(cdf_in_batch) // num_parts
+        # inference in parts to save memory
+        for i in range(num_parts):
+            if i == 0:
+                all_preds = model.predict(cdf_in_batch[i*size_parts:(i+1)*size_parts])
+            elif i == num_parts - 1:
+                all_preds = torch.cat([all_preds, model.predict(cdf_in_batch[i*size_parts:])], dim=0)
+            else:
+                all_preds = torch.cat([all_preds, model.predict(cdf_in_batch[i*size_parts:(i+1)*size_parts])], dim=0)
+        # all_preds = model.predict(cdf_in_batch)
 
     preds_reshaped = all_preds.view(num_pts, num_q)
     
