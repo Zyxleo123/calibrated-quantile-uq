@@ -27,14 +27,11 @@ from scipy.interpolate import interp1d
 
 import plot_utils
 
-# --- Constants ---
 RESULTS_PREFIX = "/home/scratch/yixiz/results"
 BASELINES = ['batch_qr', 'batch_cal', 'batch_int']
 SEEDS = list(range(5))
-# This list is the "source of truth" for what constitutes a valid dataset directory.
 DATASETS = ['boston', 'concrete', 'energy', 'kin8nm', 'naval', 'power', 'protein', 'wine', 'yacht']
 
-# Metrics to plot. The x-axis is always 'te_ece_controlled'.
 Y_METRICS = [
     'te_sharp_score_controlled',
     'te_bag_nll_controlled',
@@ -44,9 +41,6 @@ Y_METRICS = [
     'te_check_controlled',
     'te_variance_controlled'
 ]
-# For all metrics, lower is better.
-
-# --- Core Operations ---
 
 def get_valid_dataset_dirs(run_name_path):
     """
@@ -249,13 +243,9 @@ def run_analysis_1(run_name_path, x_key, y_key):
             best_pkls = hyperparam_pkls_for_scoring[best_hyper_dir_name]
             best_hyperparam_pkls_by_baseline[baseline].extend(best_pkls)
 
-    lumped_data_for_plot = {b: lump(load_and_extract_data(p, x_key, y_key)) for b, p in best_hyperparam_pkls_by_baseline.items()}
-    with open("lumped_data_size_1.txt", "w") as f:
-        for b, data in lumped_data_for_plot.items():
-            f.write(f"{b}: {len(data[0])}\n")
-
+    lumped_data_for_plot = {b: lump(load_and_extract_data(p, x_key, y_key), window_frac=window_frac) for b, p in best_hyperparam_pkls_by_baseline.items()}
     avg_distance_scores = calculate_avg_distance_to_front(best_hyperparam_pkls_by_baseline, x_key, y_key)
-    output_dir = os.path.join(run_name_path, "best_hyperparams_all_datasets")
+    output_dir = os.path.join(run_name_path, f"best_hyperparams_all_datasets_w{window_frac:.2f}")
     output_path = os.path.join(output_dir, f"{y_key}_result.png")
     plot_results(lumped_data_for_plot, y_key, output_path, f"Best Hyperparameters - {y_key}", avg_distance_scores)
 
@@ -266,12 +256,9 @@ def run_analysis_3(run_name_path, x_key, y_key):
     for dataset_path in tqdm(valid_dataset_dirs, desc="Analysis 3: Lumping by dataset"):
         dataset_name = os.path.basename(os.path.normpath(dataset_path))
         all_pkls_by_baseline = {b: glob.glob(os.path.join(dataset_path, "*", f"*{b}*.pkl")) for b in BASELINES}
-        lumped_data = {b: lump(load_and_extract_data(p, x_key, y_key)) for b, p in all_pkls_by_baseline.items()}
-        with open(f"lumped_data_size_3_{dataset_name}.txt", "w") as f:
-            for b, data in lumped_data.items():
-                f.write(f"{b}: {len(data[0])}\n")
+        lumped_data = {b: lump(load_and_extract_data(p, x_key, y_key), window_frac=window_frac) for b, p in all_pkls_by_baseline.items()}
         avg_scores = calculate_avg_distance_to_front(all_pkls_by_baseline, x_key, y_key)
-        output_dir = os.path.join(run_name_path, "all_hyperparams_per_dataset", dataset_name)
+        output_dir = os.path.join(run_name_path, f"all_hyperparams_per_dataset_w{window_frac:.2f}", dataset_name)
         output_path = os.path.join(output_dir, f"{y_key}_result.png")
         plot_results(lumped_data, y_key, output_path, f"All Hyperparameters on {dataset_name} - {y_key}", avg_scores)
 
@@ -286,23 +273,22 @@ def run_analysis_4(run_name_path, x_key, y_key):
             pattern = os.path.join(dataset_path, "*", f"*{baseline}*.pkl")
             all_pkls_by_baseline[baseline].extend(glob.glob(pattern))
 
-    lumped_data = {b: lump(load_and_extract_data(p, x_key, y_key)) for b, p in all_pkls_by_baseline.items()}
-    with open("lumped_data_size_4.txt", "w") as f:
-        for b, data in lumped_data.items():
-            f.write(f"{b}: {len(data[0])}\n")
+    lumped_data = {b: lump(load_and_extract_data(p, x_key, y_key), window_frac=window_frac) for b, p in all_pkls_by_baseline.items()}
     avg_scores = calculate_avg_distance_to_front(all_pkls_by_baseline, x_key, y_key)
-    output_dir = os.path.join(run_name_path, "global_all_datasets")
+    output_dir = os.path.join(run_name_path, f"global_all_datasets_w{window_frac:.2f}")
     output_path = os.path.join(output_dir, f"{y_key}_results.png")
     plot_results(lumped_data, y_key, output_path, f"Global Performance - {y_key}", avg_scores)
 
-def main():
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Lump and plot experiment results using average distance to Pareto front.")
     parser.add_argument("-n", "--run_name", type=str, required=True, help="The name of the run directory under RESULTS_PREFIX.")
+    parser.add_argument("--window_frac", '-w', type=float, default=0.05, help="Fraction of data for moving window in lumping.")
     args = parser.parse_args()
 
+    window_frac = args.window_frac
     run_name_path = os.path.join(RESULTS_PREFIX, args.run_name)
     if not os.path.isdir(run_name_path):
-        print(f"Error: Run directory not found at {run_name_path}"); return
+        print(f"Error: Run directory not found at {run_name_path}")
     
     for is_recal in [True, False]:
         prefix = "recal_" if is_recal else ""
@@ -317,6 +303,3 @@ def main():
             run_analysis_1(run_name_path, x_key, y_key)
             run_analysis_3(run_name_path, x_key, y_key)
             run_analysis_4(run_name_path, x_key, y_key)
-
-if __name__ == "__main__":
-    main()
