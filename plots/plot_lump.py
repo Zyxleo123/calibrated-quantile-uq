@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
 """
-Lumps and plots experiment results to analyze model performance dominance.
+Lumps and plots experiment results to analyze model performance.
 
-This script processes .pkl files containing model evaluation metrics, performs
-moving median/decile smoothing (lumping), and generates plots to show which
-model baseline dominates across different ECE (Expected Calibration Error) ranges.
+This script processes .pkl files containing model evaluation metrics. It uses the
+"average distance to the global Pareto front" as its primary comparison metric.
+A lower average distance indicates better, more consistent performance.
 
-It performs four distinct analyses:
-1. Best hyperparameter model comparison: Finds the best hyperparameter set for each 
-   baseline (lumped over seeds), then lumps these best models over all datasets.
-2. Hyperparameter comparison: Lumps all results for each hyperparameter set 
-   (over all seeds and datasets) to compare hyperparameter performance.
-3. Per-dataset comparison: For each dataset, lumps all results for each baseline
-   (over all seeds and hyperparameters) to see which baseline is best for that dataset.
-4. Global comparison: Lumps all results for each baseline over everything (seeds,
-   hyperparameters, datasets) for a final, high-level summary.
+The script performs three distinct analyses:
+1. Best hyperparameter model comparison: For each dataset, finds the best 
+   hyperparameter configuration for each baseline based on the lowest average
+   distance score. It then aggregates these "best" models for a final comparison.
+2. Per-dataset comparison: For each dataset, it compares baselines by calculating
+   the average distance score using all seeds and hyperparameters for that dataset.
+3. Global comparison: Aggregates all results over all datasets, seeds, and
+   hyperparameters for a final, high-level summary.
 """
 import os
 import glob
@@ -26,15 +25,16 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 from scipy.interpolate import interp1d
 
-import plots_utils
+import plot_utils
 
 # --- Constants ---
-RESULTS_PREFIX = "/home/scratch/yixiz/results" # As requested
+RESULTS_PREFIX = "/home/scratch/yixiz/results"
 BASELINES = ['batch_qr', 'batch_cal', 'batch_int']
 SEEDS = list(range(5))
+# This list is the "source of truth" for what constitutes a valid dataset directory.
+DATASETS = ['boston', 'concrete', 'energy', 'kin8nm', 'naval', 'power', 'protein', 'wine', 'yacht']
 
-# Metrics to plot. The script will generate one plot per metric.
-# The x-axis is always 'te_ece_controlled'.
+# Metrics to plot. The x-axis is always 'te_ece_controlled'.
 Y_METRICS = [
     'te_sharp_score_controlled',
     'te_bag_nll_controlled',
@@ -48,165 +48,179 @@ Y_METRICS = [
 
 # --- Core Operations ---
 
+def get_valid_dataset_dirs(run_name_path):
+    """
+    Finds all subdirectories in the run path and returns only those
+    whose names are in the official DATASETS list.
+    """
+    all_subdirs = glob.glob(os.path.join(run_name_path, '*/'))
+    valid_dataset_dirs = [
+        d for d in all_subdirs 
+        if os.path.isdir(d) and os.path.basename(os.path.normpath(d)) in DATASETS
+    ]
+    return sorted(valid_dataset_dirs)
+
 def load_and_extract_data(pkl_paths, x_key, y_key):
     """
-    Loads data from a list of pkl files and extracts (x, y) pairs.
-    
-    Args:
-        pkl_paths (list): List of paths to .pkl files.
-        x_key (str): Dictionary key for the x-axis data (ECE).
-        y_key (str): Dictionary key for the y-axis data (e.g., sharpness).
-
-    Returns:
-        list: A list of (x, y) tuples, sorted by x-value.
+    Loads data from pkl files and extracts (x, y) pairs, assuming files are valid.
     """
     all_points = []
     for pkl_path in pkl_paths:
-        data = plots_utils.load_pickle(pkl_path)
-        if data and x_key in data and y_key in data:
-            xs = data[x_key]
-            ys = data[y_key]
-            if len(xs) == len(ys):
-                all_points.extend(zip(xs, ys))
+        data = plot_utils.load_pickle(pkl_path)
+        xs = data[x_key]
+        ys = data[y_key]
+        all_points.extend(zip(xs, ys))
     
-    # Sort points by x-value (ECE) for rolling operations
     all_points.sort(key=lambda p: p[0])
     return all_points
 
-def lump(all_points, window_frac=None):
+def lump(all_points, window_frac=0.05):
     """
-    Calculates moving median, upper decile, and lower decile on a set of points.
-
-    Args:
-        all_points (list): A list of (x, y) tuples, pre-sorted by x.
-        window_frac (float): Fraction of total points to use for the moving window size.
-
-    Returns:
-        tuple: Three lists of (x, y) tuples for (median, lower_decile, upper_decile).
-               Returns (None, None, None) if not enough data.
+    Calculates moving median and quantiles on a set of points for visualization.
     """
     df = pd.DataFrame(all_points, columns=['x', 'y'])
+    if df.empty:
+        return [], [], []
+        
+    if window_frac == 0.0:
+        df['median'] = df['y'].expanding(min_periods=1).median()
+        df['upper'] = df['y'].expanding(min_periods=1).quantile(0.9)
+        df['lower'] = df['y'].expanding(min_periods=1).quantile(0.1)
+    else:
+        window_size = max(1, int(len(df) * window_frac))
+        df['median'] = df['y'].rolling(window=window_size, min_periods=window_size, center=True).median()
+        df['upper'] = df['y'].rolling(window=window_size, min_periods=window_size, center=True).quantile(0.9)
+        df['lower'] = df['y'].rolling(window=window_size, min_periods=window_size, center=True).quantile(0.1)
 
-    window_size = int(len(df) * window_frac)
-    df['median'] = df['y'].rolling(window=window_size, min_periods=1, center=True).median()
-    df['lower'] = df['y'].rolling(window=window_size, min_periods=1, center=True).quantile(0.)
-    df['upper'] = df['y'].rolling(window=window_size, min_periods=1, center=True).quantile(0.9)
-
+    df = df.dropna(subset=['median', 'upper', 'lower'])
     median_line = list(zip(df['x'], df['median']))
-    lower_line = list(zip(df['x'], df['lower']))
     upper_line = list(zip(df['x'], df['upper']))
-    
-    return median_line, lower_line, upper_line
+    lower_line = list(zip(df['x'], df['lower']))
 
-def get_interpolated_data(lumped_data, common_x_axis):
+    return median_line, upper_line, lower_line
+
+def find_pareto_front(points):
     """
-    Interpolates and extrapolates lumped data onto a common x-axis.
-
-    Extrapolation rules:
-    - Below data range: Assign a "terrible" value (1.0).
-    - Above data range: Use the value from the highest-ECE point.
-
-    Args:
-        lumped_data (tuple): (median_line, lower_line, upper_line) from lump().
-        common_x_axis (np.array): The common ECE axis for interpolation.
-
-    Returns:
-        dict: A dictionary with interpolated 'median', 'lower', 'upper' y-values.
+    Finds the Pareto front from a set of 2D points.
+    Assumes lower values are better for both dimensions.
     """
-    median_line, lower_line, upper_line = lumped_data
+    if not points:
+        return []
     
-    interpolated_results = {}
-    for name, line_data in [('median', median_line), ('lower', lower_line), ('upper', upper_line)]:
-        if not line_data:
-            # If no data, fill with terrible values
-            interpolated_results[name] = np.full_like(common_x_axis, 1.0)
-            continue
+    pareto_front = []
+    points = sorted(points, key=lambda p: p[0])
+    
+    for p in points:
+        is_dominated = False
+        for other_p in pareto_front:
+            if other_p[0] <= p[0] and other_p[1] <= p[1]:
+                is_dominated = True
+                break
+        if not is_dominated:
+            pareto_front = [other_p for other_p in pareto_front if not (p[0] <= other_p[0] and p[1] <= other_p[1])]
+            pareto_front.append(p)
             
-        x, y = zip(*line_data)
-        x, y = np.array(x), np.array(y)
-        
-        # Create interpolation function
-        f = interp1d(x, y, bounds_error=False, fill_value="extrapolate")
-        
-        # Apply on common axis
-        interpolated_y = f(common_x_axis)
-        
-        # Apply custom extrapolation rules
-        min_x, max_x = x.min(), x.max()
-        last_y_val = y[np.argmax(x)]
-        
-        interpolated_y[common_x_axis < min_x] = 1.0  # Terrible value for lower ECE
-        interpolated_y[common_x_axis > max_x] = last_y_val # Constant extrapolation for higher ECE
-        
-        interpolated_results[name] = interpolated_y
-        
-    return interpolated_results
+    return pareto_front
 
-
-def plot_dominance(lumped_results_dict, y_metric_name, output_path, title):
+def calculate_avg_distance_to_front(all_pkl_paths_grouped_by_method, x_key, y_key):
     """
-    Generates and saves a plot showing dominance regimes for different methods.
-
-    Args:
-        lumped_results_dict (dict): Keys are method names, values are lumped data tuples.
-        y_metric_name (str): Name of the y-metric for labeling.
-        output_path (str): Path to save the PNG file.
-        title (str): Title for the plot.
+    Calculates the average distance to the global Pareto front for each method.
     """
-    if not lumped_results_dict:
-        print(f"Skipping plot for {title}, no data.")
-        return
-
-    # 1. Create a common x-axis
-    all_x = []
-    for data in lumped_results_dict.values():
-        if data[0]: # median line
-            all_x.extend([p[0] for p in data[0]])
-    if not all_x:
-        print(f"Skipping plot for {title}, no valid lumped data.")
-        return
+    method_names = sorted(list(all_pkl_paths_grouped_by_method.keys()))
     
-    min_ece, max_ece = min(all_x), max(all_x)
-    common_x_axis = np.linspace(min_ece, max_ece, 300)
+    all_points_with_method = []
+    for method in method_names:
+        points = load_and_extract_data(all_pkl_paths_grouped_by_method[method], x_key, y_key)
+        for p in points:
+            all_points_with_method.append({'point': p, 'method': method})
 
-    # 2. Interpolate all data onto the common axis
-    interpolated_data = {}
-    for name, lumped_data in lumped_results_dict.items():
-        interpolated_data[name] = get_interpolated_data(lumped_data, common_x_axis)
+    if not all_points_with_method:
+        return {name: float('inf') for name in method_names}
         
-    # 3. Plotting
+    all_points = [d['point'] for d in all_points_with_method]
+    x_coords, y_coords = zip(*all_points)
+
+    min_x, max_x = min(x_coords), max(x_coords)
+    min_y, max_y = min(y_coords), max(y_coords)
+    range_x = max_x - min_x if max_x > min_x else 1.0
+    range_y = max_y - min_y if max_y > min_y else 1.0
+
+    for d in all_points_with_method:
+        x, y = d['point']
+        norm_x = (x - min_x) / range_x
+        norm_y = (y - min_y) / range_y
+        d['norm_point'] = (norm_x, norm_y)
+
+    all_norm_points = [d['norm_point'] for d in all_points_with_method]
+    global_pareto_front = find_pareto_front(all_norm_points)
+
+    if not global_pareto_front:
+        return {name: 0.0 for name in method_names}
+    
+    global_pareto_front_np = np.array(global_pareto_front)
+
+    for d in all_points_with_method:
+        point_np = np.array(d['norm_point'])
+        distances = np.linalg.norm(global_pareto_front_np - point_np, axis=1)
+        d['distance_to_front'] = np.min(distances)
+
+    avg_distances = defaultdict(list)
+    for d in all_points_with_method:
+        avg_distances[d['method']].append(d['distance_to_front'])
+        
+    final_scores = {
+        method: np.mean(distances) if distances else float('inf')
+        for method, distances in avg_distances.items()
+    }
+    
+    return final_scores
+
+# --- Plotting ---
+def plot_results(lumped_results_for_plot, y_metric_name, output_path, title, avg_distance_scores):
+    """
+    Generates and saves a scatter plot of the lumped median data points.
+    """
     plt.style.use('seaborn-v0_8-whitegrid')
     fig, ax = plt.subplots(figsize=(12, 8))
-    colors = plt.cm.get_cmap('viridis', len(lumped_results_dict))
     
-    median_lines = []
-    for i, (name, data) in enumerate(interpolated_data.items()):
-        ax.plot(common_x_axis, data['median'], label=f'{name} (Median)', color=colors(i), lw=2.5)
-        ax.fill_between(common_x_axis, data['lower'], data['upper'], color=colors(i), alpha=0.2, label=f'{name} (10-90th percentile)')
-        median_lines.append(data['median'])
+    colors = plt.get_cmap('viridis', len(lumped_results_for_plot))
+    markers = ['o', 's', '^', 'D', 'v', '<', '>'] 
+    
+    method_names = sorted(list(avg_distance_scores.keys()))
+    scores_str = ", ".join([f"{name}: {avg_distance_scores.get(name, float('inf')):.4f}" for name in method_names])
 
-    # 4. Report dominance
-    median_lines = np.array(median_lines)
-    best_method_indices = np.argmin(median_lines, axis=0)
-    method_names = list(interpolated_data.keys())
+    all_x, all_y = [], []
+    for i, name in enumerate(method_names):
+        median_line, upper_line, lower_line = lumped_results_for_plot[name]
+        x_vals, y_vals = zip(*median_line)
+        # shaded area between upper and lower quantiles and median line. all in scatter plot
+        if upper_line and lower_line:
+            upper_y = [y for x, y in upper_line]
+            lower_y = [y for x, y in lower_line]
+            ax.fill_between(x_vals, lower_y, upper_y, color=colors(i), alpha=0.2)
+        ax.scatter(x_vals, y_vals, label=f"{name}", color=colors(i), marker=markers[i % len(markers)], s=50)
+        all_x.extend(x_vals)
+        all_y.extend(y_vals)
     
-    dominance = {name: np.mean(best_method_indices == i) * 100 for i, name in enumerate(method_names)}
+    if not all_x:
+        print(f"Skipping plot for {title}, no data to plot.")
+        plt.close(fig); return
+
+    ax.set_xlabel("Test ECE")
+    ax.set_ylabel(f"{y_metric_name}")
+    ax.set_title(f"{title}\nAvg Distance to Front (Lower is Better): {scores_str}", fontsize=14)
     
-    dominance_str = ", ".join([f"{name}: {perc:.1f}%" for name, perc in dominance.items()])
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(handles, labels, bbox_to_anchor=(1.05, 1), loc='upper left', markerscale=1.5)
     
-    ax.set_xlabel("Test ECE (Lower is better)")
-    ax.set_ylabel(f"{y_metric_name} (Lower is better)")
-    ax.set_title(f"{title}\nDominance: {dominance_str}", fontsize=14)
-    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    ax.set_xlim(min_ece, max_ece)
-    
-    # Improve y-axis limits, e.g., by clipping high outliers for better visualization
-    all_y_medians = np.concatenate([data['median'] for data in interpolated_data.values()])
-    y_upper_bound = np.percentile(all_y_medians[all_y_medians < 0.99], 99) # Clip 1.0s
-    ax.set_ylim(bottom=0, top=min(y_upper_bound * 1.5, 1.0))
+    x_min, x_max = np.min(all_x), np.max(all_x)
+    y_min, y_max = np.min(all_y), np.max(all_y)
+    x_range = x_max - x_min if x_max > x_min else 1.0
+    y_range = y_max - y_min if y_max > y_min else 1.0
+    ax.set_xlim(x_min - 0.05 * x_range, x_max + 0.05 * x_range)
+    ax.set_ylim(y_min - 0.05 * y_range, y_max + 0.05 * y_range)
     
     plt.tight_layout(rect=[0, 0, 0.85, 1])
-    
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close(fig)
@@ -215,154 +229,82 @@ def plot_dominance(lumped_results_dict, y_metric_name, output_path, title):
 # --- Analysis Functions ---
 
 def run_analysis_1(run_name_path, x_key, y_key):
-    """
-    1. First pick the best model (in terms of dominance) for each baseline by lumping 
-       over all seeds of each hyperparameter combination for each dataset. 
-    2. Then with the best models and their data, lump over dataset and plot.
-    """
-    print("\n--- Running Analysis 1: Best Hyperparameter Model Comparison ---")
+    """Analysis 1: Best hyperparameter (per-dataset) comparison."""
+    print("\n--- Running Analysis 1: Best Hyperparameter (Per-Dataset) Comparison ---")
     
-    datasets = [d for d in os.listdir(run_name_path) if os.path.isdir(os.path.join(run_name_path, d))]
-    
-    best_hyperparam_pkls = defaultdict(list)
+    # Use the helper to get a clean list of dataset directories that actually exist
+    valid_dataset_dirs = get_valid_dataset_dirs(run_name_path)
+    best_hyperparam_pkls_by_baseline = defaultdict(list)
 
-    for dataset in tqdm(datasets, desc="Analysis 1/2: Finding best hypers per dataset"):
-        dataset_path = os.path.join(run_name_path, dataset)
-        
+    for dataset_path in tqdm(valid_dataset_dirs, desc="Analysis 1: Finding best hyperparameters per dataset"):
+        hyperparam_dirs = [p for p in glob.glob(os.path.join(dataset_path, "*")) if os.path.isdir(p)]
+
         for baseline in BASELINES:
-            hyperparam_dirs = glob.glob(os.path.join(dataset_path, f"*{baseline}*"))
+            hyperparam_pkls_for_scoring = {os.path.basename(hp_dir): glob.glob(os.path.join(hp_dir, f"*{baseline}*.pkl")) for hp_dir in hyperparam_dirs}
+            hyperparam_pkls_for_scoring = {k: v for k, v in hyperparam_pkls_for_scoring.items() if v}
             
-            best_auc = float('inf')
-            best_pkls_for_baseline = []
+            distance_scores = calculate_avg_distance_to_front(hyperparam_pkls_for_scoring, x_key, y_key)
             
-            if not hyperparam_dirs:
-                continue
+            best_hyper_dir_name = min(distance_scores, key=distance_scores.get)
+            best_pkls = hyperparam_pkls_for_scoring[best_hyper_dir_name]
+            best_hyperparam_pkls_by_baseline[baseline].extend(best_pkls)
 
-            for hyper_dir in hyperparam_dirs:
-                pkl_paths = glob.glob(os.path.join(hyper_dir, "*.pkl"))
-                
-                # Lump over seeds
-                points = load_and_extract_data(pkl_paths, x_key, y_key)
-                median, _, _ = lump(points)
-                
-                if median:
-                    # Use Area Under Curve of the median line as proxy for "best"
-                    x, y = zip(*median)
-                    auc = np.trapz(y, x)
-                    if auc < best_auc:
-                        best_auc = auc
-                        best_pkls_for_baseline = pkl_paths
-            
-            if best_pkls_for_baseline:
-                best_hyperparam_pkls[baseline].extend(best_pkls_for_baseline)
+    lumped_data_for_plot = {b: lump(load_and_extract_data(p, x_key, y_key)) for b, p in best_hyperparam_pkls_by_baseline.items()}
+    with open("lumped_data_size_1.txt", "w") as f:
+        for b, data in lumped_data_for_plot.items():
+            f.write(f"{b}: {len(data[0])}\n")
 
-    # Now lump the "best" pkls over all datasets
-    final_lumped_data = {}
-    for baseline in BASELINES:
-        if not best_hyperparam_pkls[baseline]:
-            print(f"Warning (Analysis 1): No valid pkls found for baseline '{baseline}'")
-            continue
-        all_points = load_and_extract_data(best_hyperparam_pkls[baseline], x_key, y_key)
-        final_lumped_data[baseline] = lump(all_points)
-
-    output_path = os.path.join(run_name_path, "analysis_1_best_hyperparams", f"{y_key}_dominance.png")
-    plot_dominance(final_lumped_data, y_key, output_path, "Best Hyperparameters Lumped Over Datasets")
-
-def run_analysis_2(run_name_path, x_key, y_key):
-    """
-    Lump within all seeds and all dataset, for each hyperparameter combination.
-    """
-    print("\n--- Running Analysis 2: Hyperparameter Comparison ---")
-    
-    all_hyperparam_dirs = glob.glob(os.path.join(run_name_path, "*", "*"))
-    # Extract unique hyperparameter configuration names (the final directory name)
-    hyperparam_names = sorted(list(set([os.path.basename(p) for p in all_hyperparam_dirs])))
-
-    lumped_by_hyperparam = {}
-    for hyper_name in tqdm(hyperparam_names, desc="Analysis 2: Lumping by hyperparam"):
-        # Find all pkls across all datasets that match this hyperparameter name
-        pkl_paths = glob.glob(os.path.join(run_name_path, "*", hyper_name, "*.pkl"))
-        
-        points = load_and_extract_data(pkl_paths, x_key, y_key)
-        lumped_by_hyperparam[hyper_name] = lump(points)
-    
-    output_path = os.path.join(run_name_path, "analysis_2_by_hyperparam", f"{y_key}_dominance.png")
-    plot_dominance(lumped_by_hyperparam, y_key, output_path, "Hyperparameter Performance Lumped Over Seeds & Datasets")
+    avg_distance_scores = calculate_avg_distance_to_front(best_hyperparam_pkls_by_baseline, x_key, y_key)
+    output_dir = os.path.join(run_name_path, "best_hyperparams_all_datasets")
+    output_path = os.path.join(output_dir, f"{y_key}_result.png")
+    plot_results(lumped_data_for_plot, y_key, output_path, f"Best Hyperparameters - {y_key}", avg_distance_scores)
 
 def run_analysis_3(run_name_path, x_key, y_key):
-    """
-    Lump within all seeds and all hyperparameters of a baseline and plot, for each dataset.
-    """
+    """Analysis 3: Per-dataset baseline comparison."""
     print("\n--- Running Analysis 3: Per-Dataset Baseline Comparison ---")
-    datasets = [d for d in os.listdir(run_name_path) if os.path.isdir(os.path.join(run_name_path, d))]
-
-    for dataset in tqdm(datasets, desc="Analysis 3: Lumping by dataset"):
-        dataset_path = os.path.join(run_name_path, dataset)
-        lumped_by_baseline = {}
-        
-        for baseline in BASELINES:
-            # Get all pkls for this baseline in this dataset, across all hypers and seeds
-            pkl_paths = glob.glob(os.path.join(dataset_path, f"*{baseline}*", "*.pkl"))
-            
-            points = load_and_extract_data(pkl_paths, x_key, y_key)
-            lumped_by_baseline[baseline] = lump(points)
-
-        output_path = os.path.join(dataset_path, f"analysis_3_baseline_comparison_{y_key}.png")
-        plot_dominance(lumped_by_baseline, y_key, output_path, f"Baseline Performance on Dataset: {dataset}")
+    valid_dataset_dirs = get_valid_dataset_dirs(run_name_path)
+    for dataset_path in tqdm(valid_dataset_dirs, desc="Analysis 3: Lumping by dataset"):
+        dataset_name = os.path.basename(os.path.normpath(dataset_path))
+        all_pkls_by_baseline = {b: glob.glob(os.path.join(dataset_path, "*", f"*{b}*.pkl")) for b in BASELINES}
+        lumped_data = {b: lump(load_and_extract_data(p, x_key, y_key)) for b, p in all_pkls_by_baseline.items()}
+        with open(f"lumped_data_size_3_{dataset_name}.txt", "w") as f:
+            for b, data in lumped_data.items():
+                f.write(f"{b}: {len(data[0])}\n")
+        avg_scores = calculate_avg_distance_to_front(all_pkls_by_baseline, x_key, y_key)
+        output_dir = os.path.join(run_name_path, "all_hyperparams_per_dataset", dataset_name)
+        output_path = os.path.join(output_dir, f"{y_key}_result.png")
+        plot_results(lumped_data, y_key, output_path, f"All Hyperparameters on {dataset_name} - {y_key}", avg_scores)
 
 def run_analysis_4(run_name_path, x_key, y_key):
-    """
-    Lump all seeds, hyperparameters and all datasets for each baseline.
-    """
+    """Analysis 4: Global baseline comparison."""
     print("\n--- Running Analysis 4: Global Baseline Comparison ---")
+    valid_dataset_dirs = get_valid_dataset_dirs(run_name_path)
+    all_pkls_by_baseline = defaultdict(list)
     
-    global_lumped_data = {}
     for baseline in tqdm(BASELINES, desc="Analysis 4: Lumping globally"):
-        # Get all pkls for this baseline across EVERYTHING
-        pkl_paths = glob.glob(os.path.join(run_name_path, "*", f"*{baseline}*", "*.pkl"))
-        
-        points = load_and_extract_data(pkl_paths, x_key, y_key)
-        global_lumped_data[baseline] = lump(points)
+        for dataset_path in valid_dataset_dirs:
+            pattern = os.path.join(dataset_path, "*", f"*{baseline}*.pkl")
+            all_pkls_by_baseline[baseline].extend(glob.glob(pattern))
 
-    output_path = os.path.join(run_name_path, "analysis_4_global", f"{y_key}_dominance.png")
-    plot_dominance(global_lumped_data, y_key, output_path, "Global Baseline Performance")
+    lumped_data = {b: lump(load_and_extract_data(p, x_key, y_key)) for b, p in all_pkls_by_baseline.items()}
+    with open("lumped_data_size_4.txt", "w") as f:
+        for b, data in lumped_data.items():
+            f.write(f"{b}: {len(data[0])}\n")
+    avg_scores = calculate_avg_distance_to_front(all_pkls_by_baseline, x_key, y_key)
+    output_dir = os.path.join(run_name_path, "global_all_datasets")
+    output_path = os.path.join(output_dir, f"{y_key}_results.png")
+    plot_results(lumped_data, y_key, output_path, f"Global Performance - {y_key}", avg_scores)
 
 def main():
-    """Main function to parse arguments and run analyses."""
-    parser = argparse.ArgumentParser(description="Lump and plot experiment results.")
-    parser.add_argument("run_name", type=str, help="The name of the run directory under RESULTS_PREFIX.")
-    parser.add_argument("--skip-setup", action="store_true", help="Skip dummy pkl generation.")
-    
+    parser = argparse.ArgumentParser(description="Lump and plot experiment results using average distance to Pareto front.")
+    parser.add_argument("-n", "--run_name", type=str, required=True, help="The name of the run directory under RESULTS_PREFIX.")
     args = parser.parse_args()
 
     run_name_path = os.path.join(RESULTS_PREFIX, args.run_name)
+    if not os.path.isdir(run_name_path):
+        print(f"Error: Run directory not found at {run_name_path}"); return
     
-    if not os.path.isdir(run_name_path) and not args.skip_setup:
-        print(f"Run directory not found. Creating a dummy structure at '{run_name_path}' for demonstration.")
-        # Create dummy data for testing
-        dummy_datasets = ['cifar10', 'imagenet']
-        dummy_hyperparams = {
-            'batch_qr': ['qr_lr1e-3', 'qr_lr1e-4'],
-            'batch_cal': ['cal_temp2', 'cal_temp5'],
-            'batch_int': ['int_alpha0.1', 'int_alpha0.05']
-        }
-        for dset in dummy_datasets:
-            for baseline, hypers in dummy_hyperparams.items():
-                for hyper in hypers:
-                    for seed in SEEDS:
-                        pkl_dir = os.path.join(run_name_path, dset, f"{hyper}_{baseline}")
-                        os.makedirs(pkl_dir, exist_ok=True)
-                        pkl_path = os.path.join(pkl_dir, f"model_{seed}.pkl")
-                        dummy_data = plots_utils.create_dummy_pkl_data(seed, baseline)
-                        with open(pkl_path, 'wb') as f:
-                            import pickle
-                            pickle.dump(dummy_data, f)
-        print("Dummy data generation complete.")
-    elif not os.path.isdir(run_name_path):
-         print(f"Error: Run directory '{run_name_path}' not found. Aborting.")
-         return
-
-    for is_recal in [False, True]:
+    for is_recal in [True, False]:
         prefix = "recal_" if is_recal else ""
         x_key = f"{prefix}te_ece_controlled"
         
@@ -370,11 +312,9 @@ def main():
 
         for y_metric in Y_METRICS:
             y_key = f"{prefix}{y_metric}"
-            print(f"\n--- Plotting for metric: {y_key} ---")
+            print(f"\n--- Analyzing metric: {y_key} ---")
             
-            # Run all four analyses for the current metric
             run_analysis_1(run_name_path, x_key, y_key)
-            run_analysis_2(run_name_path, x_key, y_key)
             run_analysis_3(run_name_path, x_key, y_key)
             run_analysis_4(run_name_path, x_key, y_key)
 
