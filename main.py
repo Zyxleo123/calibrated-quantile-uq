@@ -406,9 +406,9 @@ if __name__ == "__main__":
     # validation_device = torch.device("cpu")
     validation_device = args.device
     x_va_validation_device, y_va_validation_device = x_va.to(validation_device), y_va.to(validation_device)
+    y_va_centered_validation_device = y_va_centered.to(validation_device) if args.loss == 'maqr' else None
     ece_q_list_validation_device = torch.linspace(0.01, 0.99, 99).to(validation_device)
     sharpness_q_list_validation_device = torch.tensor([0.025, 0.975], device=validation_device)
-    print(args.device)
 
     # if args.debug:
     #     tqdm_out = sys.stdout
@@ -424,128 +424,78 @@ if __name__ == "__main__":
             # Take train step
             # list of losses from each batch, for one epoch
             ep_train_loss = []
-        # Take train step
-        # list of losses from each batch, for one epoch
-        ep_train_loss = []
-        if args.loss == 'maqr':
-            for (xi, yi) in loader:
-                xi, yi = xi.to(args.device), yi.to(args.device)
-                loss = model_ens.loss(mse_loss_fn, xi, yi, q_list=None, batch_q=True, take_step=True, args=args)
-                ep_train_loss.append(loss)
-        else:
-            if not args.boot:
-                if ep % args.draw_group_every == 0:
-                    # drawing a group batch
-                    group_idxs = group_list[curr_group_idx]
-                    curr_group_idx = (curr_group_idx + 1) % dim_x
-                    for g_idx in group_idxs:
-                        xi = x_tr[g_idx.flatten()].to(args.device)
-                        yi = y_tr[g_idx.flatten()].to(args.device)
-                        q_list = torch.rand(args.num_q)
-                        loss = model_ens.loss(
-                            loss_fn,
-                            xi,
-                            yi,
-                            q_list,
-                            batch_q=batch_loss,
-                            take_step=True,
-                            args=args,
-                        )
-                        ep_train_loss.append(loss)
-                else:
-                    # just doing ordinary random batch
-                    for (xi, yi) in loader:
-                        xi, yi = xi.to(args.device), yi.to(args.device)
-                        q_list = torch.rand(args.num_q)
-                        loss = model_ens.loss(
-                            loss_fn,
-                            xi,
-                            yi,
-                            q_list,
-                            batch_q=batch_loss,
-                            take_step=True,
-                            args=args,
-                        )
-                        ep_train_loss.append(loss)
-            else:
-                # bootstrapped ensemble of models
-                for xi_yi_samp in zip(*loader_list):
-                    xi_list = [item[0].to(args.device) for item in xi_yi_samp]
-                    yi_list = [item[1].to(args.device) for item in xi_yi_samp]
-                    assert len(xi_list) == len(yi_list) == args.num_ens
-                    q_list = torch.rand(args.num_q)
-                    loss = model_ens.loss_boot(
-                        loss_fn,
-                        xi_list,
-                        yi_list,
-                        q_list,
-                        batch_q=batch_loss,
-                        take_step=True,
-                        args=args,
-                    )
+            if args.loss == 'maqr':
+                for (xi, yi) in loader:
+                    xi, yi = xi.to(args.device), yi.to(args.device)
+                    loss = model_ens.loss(mse_loss_fn, xi, yi, q_list=None, batch_q=True, take_step=True, args=args)
                     ep_train_loss.append(loss)
+            else:
+                if not args.boot:
+                    if ep % args.draw_group_every == 0:
+                        # drawing a group batch
+                        group_idxs = group_list[curr_group_idx]
+                        curr_group_idx = (curr_group_idx + 1) % dim_x
+                        for g_idx in group_idxs:
+                            xi = x_tr[g_idx.flatten()].to(args.device)
+                            yi = y_tr[g_idx.flatten()].to(args.device)
+                            q_list = torch.rand(args.num_q)
+                            loss = model_ens.loss(
+                                loss_fn,
+                                xi,
+                                yi,
+                                q_list,
+                                batch_q=batch_loss,
+                                take_step=True,
+                                args=args,
+                            )
+                            ep_train_loss.append(loss)
+                    else:
+                        # just doing ordinary random batch
+                        for (xi, yi) in loader:
+                            xi, yi = xi.to(args.device), yi.to(args.device)
+                            q_list = torch.rand(args.num_q)
+                            loss = model_ens.loss(
+                                loss_fn,
+                                xi,
+                                yi,
+                                q_list,
+                                batch_q=batch_loss,
+                                take_step=True,
+                                args=args,
+                            )
+                            ep_train_loss.append(loss)
+                else:
+                    # bootstrapped ensemble of models
+                    for xi_yi_samp in zip(*loader_list):
+                        xi_list = [item[0].to(args.device) for item in xi_yi_samp]
+                        yi_list = [item[1].to(args.device) for item in xi_yi_samp]
+                        assert len(xi_list) == len(yi_list) == args.num_ens
+                        q_list = torch.rand(args.num_q)
+                        loss = model_ens.loss_boot(
+                            loss_fn,
+                            xi_list,
+                            yi_list,
+                            q_list,
+                            batch_q=batch_loss,
+                            take_step=True,
+                            args=args,
+                        )
+                        ep_train_loss.append(loss)
             ep_tr_loss = np.nanmean(np.stack(ep_train_loss, axis=0), axis=0)
             tr_loss_list.append(ep_tr_loss)
 
-            # Validation loss
+
             model_ens.use_device(validation_device)
-            # x_va, y_va = x_va.to(validation_device), y_va.to(validation_device)
-            # va_te_q_list = torch.linspace(0.01, 0.99, 99).to(validation_device)
-            # ep_va_loss = model_ens.update_va_loss(
-            #     loss_fn,
-            #     x_va,
-            #     y_va,
-            #     va_te_q_list,
-            #     batch_q=batch_loss,
-            #     curr_ep=ep,
-            #     num_wait=args.wait,
-            #     args=args,
-            # )
-            # va_loss_list.append(ep_va_loss)
 
             ece = average_calibration(
                 model_ens,
                 x_va_validation_device,
-                y_va_validation_device,
+                y_va_validation_device if args.loss != 'maqr' else y_va_centered_validation_device,
                 args=Namespace(
                     exp_props=ece_q_list_validation_device,
                     device=validation_device,
                     metric="cal_q"
                 )
-        ep_tr_loss = np.nanmean(np.stack(ep_train_loss, axis=0), axis=0)
-        tr_loss_list.append(ep_tr_loss)
-
-        # Validation loss
-        x_va, y_va = x_va.to(args.device), y_va.to(args.device)
-        va_te_q_list = torch.linspace(0.01, 0.99, 99).to(args.device)
-        ep_va_loss = model_ens.update_va_loss(
-            loss_fn,
-            x_va if args.loss != 'maqr' else cdf_x_va_tensor.to(args.device),
-            y_va if args.loss != 'maqr' else cdf_y_va_tensor.to(args.device),
-            va_te_q_list if args.loss != 'maqr' else None,
-            batch_q=batch_loss if args.loss != 'maqr' else True,
-            curr_ep=ep,
-            num_wait=args.wait,
-            args=args,
-        )
-        va_loss_list.append(ep_va_loss)
-
-        # Printing some losses
-        if (ep % 200 == 0) or (ep == args.num_ep - 1):
-            print(f"{vars(args)} EP:{ep}")
-            # print("Train loss {}".format(ep_tr_loss))
-            # print("Val loss {}".format(ep_va_loss))
-
-        validation_device = torch.device("cpu")
-        model_ens.use_device(validation_device)
-        ece = average_calibration(
-            model_ens,
-            x_va.to(validation_device),
-            (y_va if args.loss != 'maqr' else y_va_centered).to(validation_device),
-            args=Namespace(
-                exp_props=va_te_q_list.to(validation_device),
-                device=validation_device,
-                metric="cal_q"
             )
             if ece > args.max_thres:
                 model_ens.use_device(args.device)
@@ -554,7 +504,7 @@ if __name__ == "__main__":
             sharp_score, _ = test_uq(
                 model_ens,
                 x_va_validation_device,
-                y_va_validation_device,
+                y_va_validation_device if args.loss != 'maqr' else y_va_centered_validation_device,
                 sharpness_q_list_validation_device,
                 y_range,
                 recal_model=None,
@@ -565,17 +515,7 @@ if __name__ == "__main__":
 
             va_sharp_list.append(sharp_score)
             va_ece_list.append(ece)
-        sharp_score, _ = test_uq(
-            model_ens,
-            x_va.to(validation_device),
-            (y_va if args.loss != 'maqr' else y_va_centered).to(validation_device),
-            va_te_q_list.to(validation_device),
-            y_range,
-            recal_model=None,
-            recal_type=None,
-            output_sharp_score_only=True
-        )
-        model_ens.use_device(args.device)
+
 
             frontier.insert(ece, sharp_score, deepcopy(model_ens), only_frontier=True)
 
