@@ -222,7 +222,6 @@ class QModelEns(uq_model):
 
         self.num_ens = num_ens
         self.device = device
-        # Instantiate EnhancedMLP for each ensemble member (isolated from QModelEns logic)
         self.model = [
             EnhancedMLP(
                 input_size=input_size,
@@ -511,7 +510,21 @@ class QModelEns(uq_model):
         x_expanded = x.repeat_interleave(num_q, dim=0)
         p_expanded = in_q_list.repeat(num_x).view(-1, 1)
         cdf_in_batch = torch.cat([x_expanded, p_expanded], dim=1)
-        all_preds = self.predict(cdf_in_batch)
+
+        with torch.no_grad():
+            num_parts = 20
+            size_parts = len(cdf_in_batch) // num_parts
+            # inference in parts to save memory
+            for i in range(num_parts):
+                if i == 0:
+                    all_preds = self.predict(cdf_in_batch[i*size_parts:(i+1)*size_parts])
+                elif i == num_parts - 1:
+                    part_preds = self.predict(cdf_in_batch[i*size_parts:])
+                    all_preds = torch.cat([all_preds, part_preds], dim=0)
+                else:
+                    part_preds = self.predict(cdf_in_batch[i*size_parts:(i+1)*size_parts])
+                    all_preds = torch.cat([all_preds, part_preds], dim=0)
+            all_preds = self.predict(cdf_in_batch)
         pred_mat = all_preds.view(num_x, num_q)
 
         assert pred_mat.shape == (num_x, num_q)

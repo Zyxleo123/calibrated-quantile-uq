@@ -4,3 +4,4 @@ utils/NNKit/*
 *.log
 results
 *.pkl
+*.txt
