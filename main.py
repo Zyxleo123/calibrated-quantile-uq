@@ -106,12 +106,6 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=1e-3, help="learning rate")
     parser.add_argument("--wd", type=float, default=0.0, help="weight decay")
     parser.add_argument("--bs", type=int, default=64, help="batch size")
-    parser.add_argument(
-        "--wait",
-        type=int,
-        default=100000,
-        help="how long to wait for lower validation loss",
-    )
 
     parser.add_argument("--loss", type=str, default='scaled_batch_cal',
                         help="specify type of loss")
@@ -207,7 +201,7 @@ def parse_args():
         args.rand_ref = bool(args.rand_ref)
 
     if args.draw_group_every is None:
-        args.draw_group_every = args.num_ep
+        args.draw_group_every = args.num_ep + 1
 
     args.boot = bool(args.boot)
     args.recal = bool(args.recal)
@@ -406,6 +400,8 @@ if __name__ == "__main__":
     # validation_device = torch.device("cpu")
     validation_device = args.device
     x_va_validation_device, y_va_validation_device = x_va.to(validation_device), y_va.to(validation_device)
+    cdf_x_va_tensor_validation_device = cdf_x_va_tensor.to(validation_device) if args.loss == 'maqr' else None
+    cdf_y_va_tensor_validation_device = cdf_y_va_tensor.to(validation_device) if args.loss == 'maqr' else None
     y_va_centered_validation_device = y_va_centered.to(validation_device) if args.loss == 'maqr' else None
     ece_q_list_validation_device = torch.linspace(0.01, 0.99, 99).to(validation_device)
     sharpness_q_list_validation_device = torch.tensor([0.025, 0.975], device=validation_device)
@@ -417,10 +413,6 @@ if __name__ == "__main__":
     tqdm_out_path = os.path.join(os.environ["SCRATCH"], "tqdm", os.path.basename(save_file_name) + ".log")
     with open(tqdm_out_path, 'w', buffering=1) as tqdm_out:
         for ep in tqdm.tqdm(range(args.num_ep), file=tqdm_out, mininterval=1.0):
-            if model_ens.done_training:
-                print("Done training ens at EP {}".format(ep))
-                break
-
             # Take train step
             # list of losses from each batch, for one epoch
             ep_train_loss = []
@@ -431,7 +423,7 @@ if __name__ == "__main__":
                     ep_train_loss.append(loss)
             else:
                 if not args.boot:
-                    if ep % args.draw_group_every == 0:
+                    if (ep + 1) % args.draw_group_every == 0:
                         # drawing a group batch
                         group_idxs = group_list[curr_group_idx]
                         curr_group_idx = (curr_group_idx + 1) % dim_x
@@ -481,9 +473,21 @@ if __name__ == "__main__":
                             args=args,
                         )
                         ep_train_loss.append(loss)
-            ep_tr_loss = np.nanmean(np.stack(ep_train_loss, axis=0), axis=0)
+            # ep_tr_loss = np.nanmean(np.stack(ep_train_loss, axis=0), axis=0)
+            ep_tr_loss = torch.mean(torch.stack(ep_train_loss, dim=0), dim=0)
             tr_loss_list.append(ep_tr_loss)
 
+
+            model_ens.update_va_loss(
+                loss_fn,
+                x_va_validation_device if args.loss != 'maqr' else cdf_x_va_tensor_validation_device,
+                y_va_validation_device if args.loss != 'maqr' else cdf_y_va_tensor_validation_device,
+                ece_q_list_validation_device if args.loss != 'maqr' else None,
+                batch_q=batch_loss if args.loss != 'maqr' else True,
+                curr_ep=ep,
+                num_wait=args.num_ep // 10,
+                args=args,
+            )
 
             model_ens.use_device(validation_device)
 
@@ -528,6 +532,7 @@ if __name__ == "__main__":
         x_te.to(testing_device),
         y_te.to(testing_device),
     )
+    model_ens.model = [best_va_model if best_va_model is not None else model for best_va_model, model in zip(model_ens.best_va_model, model_ens.model)]
     model_ens.use_device(testing_device)
 
     if args.loss == 'maqr':
@@ -592,6 +597,14 @@ if __name__ == "__main__":
         )
     )
 
+    args_for_score = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99), alpha_list=torch.linspace(0.01, 0.20, 20))
+    te_bag_nll = float(bag_nll(model_ens, x_te, y_te, args_for_score))
+    te_crps = float(crps_score(model_ens, x_te, y_te, args_for_score))
+    te_mpiw = float(torch.mean(mpiw(model_ens, x_te, y_te, args_for_score)))
+    te_interval = float(interval_score(model_ens, x_te, y_te, args_for_score))
+    te_check = float(check_loss(model_ens, x_te, y_te, args_for_score))
+    te_variance = float(mean_variance(model_ens, x_te, y_te, args_for_score))
+
     if args.recal:
         recal_model = iso_recal(va_exp_props_recal, va_obs_props_recal)
         recal_exp_props = torch.linspace(0.01, 0.99, 99, device=testing_device)
@@ -641,6 +654,13 @@ if __name__ == "__main__":
                 recal_type="sklearn"
             )
         )
+        args_for_score = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99), alpha_list=torch.linspace(0.01, 0.20, 20), recal_model=recal_model, recal_type="sklearn")
+        recal_te_bag_nll = float(bag_nll(model_ens, x_te, y_te, args_for_score))
+        recal_te_crps = float(crps_score(model_ens, x_te, y_te, args_for_score))
+        recal_te_mpiw = float(torch.mean(mpiw(model_ens, x_te, y_te, args_for_score)))
+        recal_te_interval = float(interval_score(model_ens, x_te, y_te, args_for_score))
+        recal_te_check = float(check_loss(model_ens, x_te, y_te, args_for_score))
+        recal_te_variance = float(mean_variance(model_ens, x_te, y_te, args_for_score))
 
     metrics_controlled = []
     with open(tqdm_out_path, 'a', buffering=1) as tqdm_out:
@@ -748,14 +768,14 @@ if __name__ == "__main__":
 
         "va_sharp_score", "te_sharp_score", "va_ece", "te_ece",
 
-        "va_cali_score", "va_exp_props", "va_obs_props", "va_q_preds", "va_bag_nll", "va_crps", "va_mpiw", "va_interval", "va_check",
-        "te_cali_score", "te_exp_props", "te_obs_props", "te_q_preds", "te_bag_nll", "te_crps", "te_mpiw", "te_interval", "te_check", "te_g_cali_scores", "te_scoring_rules",
+        "va_cali_score", "va_exp_props", "va_obs_props", "va_q_preds", "va_bag_nll", "va_crps", "va_mpiw", "va_interval", "va_check", "va_variance", "va_g_cali_scores", "va_scoring_rules", 
+        "te_cali_score", "te_exp_props", "te_obs_props", "te_q_preds", "te_bag_nll", "te_crps", "te_mpiw", "te_interval", "te_check", "te_variance", "te_g_cali_scores", "te_scoring_rules",
 
         "recal_exp_props",
         "recal_va_sharp_score", "recal_te_sharp_score", "recal_va_ece", "recal_te_ece",
 
-        "recal_va_cali_score", "recal_va_obs_props", "recal_va_q_preds", "recal_va_g_cali_scores", "recal_va_scoring_rules", "recal_va_bag_nll", "recal_va_crps", "recal_va_mpiw", "recal_va_interval", "recal_va_check",
-        "recal_te_cali_score", "recal_te_obs_props", "recal_te_q_preds", "recal_te_g_cali_scores", "recal_te_scoring_rules", "recal_te_bag_nll", "recal_te_crps", "recal_te_mpiw", "recal_te_interval", "recal_te_check",
+        "recal_va_cali_score", "recal_va_obs_props", "recal_va_q_preds", "recal_va_g_cali_scores", "recal_va_scoring_rules", "recal_va_bag_nll", "recal_va_crps", "recal_va_mpiw", "recal_va_interval", "recal_va_check", "recal_va_variance",
+        "recal_te_cali_score", "recal_te_obs_props", "recal_te_q_preds", "recal_te_g_cali_scores", "recal_te_scoring_rules", "recal_te_bag_nll", "recal_te_crps", "recal_te_mpiw", "recal_te_interval", "recal_te_check", "recal_te_variance",
     ]
     
     current_locals = locals()

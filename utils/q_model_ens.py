@@ -240,11 +240,10 @@ class QModelEns(uq_model):
             torch.optim.Adam(x.parameters(), lr=lr, weight_decay=wd)
             for x in self.model
         ]
-        self.keep_training = [True for _ in range(num_ens)]
+        self.waiting = [True for _ in range(num_ens)]
         self.best_va_loss = [np.inf for _ in range(num_ens)]
         self.best_va_model = [None for _ in range(num_ens)]
         self.best_va_ep = [0 for _ in range(num_ens)]
-        self.done_training = False
 
     def use_device(self, device):
         self.device = device
@@ -273,30 +272,27 @@ class QModelEns(uq_model):
         ens_loss = []
         for idx in range(self.num_ens):
             self.optimizers[idx].zero_grad()
-            if self.keep_training[idx]:
-                if batch_q:
-                    loss = loss_fn(
-                        self.model[idx], y, x, q_list, self.device, args
-                    )
-                else:
-                    loss = gather_loss_per_q(
-                        loss_fn,
-                        self.model[idx],
-                        y,
-                        x,
-                        q_list,
-                        self.device,
-                        args,
-                    )
-                ens_loss.append(loss.item())
-
-                if take_step:
-                    loss.backward()
-                    self.optimizers[idx].step()
+            if batch_q:
+                loss = loss_fn(
+                    self.model[idx], y, x, q_list, self.device, args
+                )
             else:
-                ens_loss.append(np.nan)
+                loss = gather_loss_per_q(
+                    loss_fn,
+                    self.model[idx],
+                    y,
+                    x,
+                    q_list,
+                    self.device,
+                    args,
+                )
 
-        return np.asarray(ens_loss)
+            if take_step:
+                loss.backward()
+                self.optimizers[idx].step()
+            ens_loss.append(loss.detach())
+
+        return torch.tensor(ens_loss, device=self.device)
 
     def loss_boot(
         self, loss_fn, x_list, y_list, q_list, batch_q, take_step, args
@@ -304,64 +300,53 @@ class QModelEns(uq_model):
         ens_loss = []
         for idx in range(self.num_ens):
             self.optimizers[idx].zero_grad()
-            if self.keep_training[idx]:
-                if batch_q:
-                    loss = loss_fn(
-                        self.model[idx],
-                        y_list[idx],
-                        x_list[idx],
-                        q_list,
-                        self.device,
-                        args,
-                    )
-                else:
-                    loss = gather_loss_per_q(
-                        loss_fn,
-                        self.model[idx],
-                        y_list[idx],
-                        x_list[idx],
-                        q_list,
-                        self.device,
-                        args,
-                    )
-                ens_loss.append(loss.item())
-
-                if take_step:
-                    loss.backward()
-                    self.optimizers[idx].step()
+            if batch_q:
+                loss = loss_fn(
+                    self.model[idx],
+                    y_list[idx],
+                    x_list[idx],
+                    q_list,
+                    self.device,
+                    args,
+                )
             else:
-                ens_loss.append(np.nan)
+                loss = gather_loss_per_q(
+                    loss_fn,
+                    self.model[idx],
+                    y_list[idx],
+                    x_list[idx],
+                    q_list,
+                    self.device,
+                    args,
+                )
 
-        return np.asarray(ens_loss)
+            if take_step:
+                loss.backward()
+                self.optimizers[idx].step()
+            ens_loss.append(loss.detach())
+
+        return torch.tensor(ens_loss, device=self.device)
 
     def update_va_loss(
         self, loss_fn, x, y, q_list, batch_q, curr_ep, num_wait, args
     ):
-        with torch.no_grad():
-            va_loss = self.loss(
-                loss_fn, x, y, q_list, batch_q, take_step=False, args=args
-            )
+        if any(self.waiting):
+            with torch.no_grad():
+                va_loss = self.loss(
+                    loss_fn, x, y, q_list, batch_q, take_step=False, args=args
+                )
 
         for idx in range(self.num_ens):
-            if self.keep_training[idx]:
+            if self.waiting[idx]:
                 if va_loss[idx] < self.best_va_loss[idx]:
                     self.best_va_loss[idx] = va_loss[idx]
                     self.best_va_ep[idx] = curr_ep
                     self.best_va_model[idx] = deepcopy(self.model[idx])
                 else:
                     if curr_ep - self.best_va_ep[idx] > num_wait:
-                        print(
-                            "Val loss stagnate for {}, model {}".format(
-                                num_wait, idx
-                            )
-                        )
-                        print("EP {}".format(curr_ep))
-                        self.keep_training[idx] = False
+                        self.waiting[idx] = False
+                        print(f"Early stopping at ep {curr_ep}")
 
-        if not any(self.keep_training):
-            self.done_training = True
-
-        return va_loss
 
     #####
     def predict(
