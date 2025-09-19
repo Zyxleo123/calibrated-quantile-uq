@@ -9,6 +9,8 @@ PR_DIR = "/zfsauton/project/public/ysc/"
 def get_facebook_data(args):
     train_data = np.loadtxt("{}/facebook_train.txt".format(args.data_dir))
     test_data = np.loadtxt("{}/facebook_test.txt".format(args.data_dir))
+    train_data = train_data[~np.isnan(train_data).any(axis=1)]
+    test_data = test_data[~np.isnan(test_data).any(axis=1)]
     x_tr = train_data[:, :-1]
     y_tr = train_data[:, -1].reshape(-1, 1)
     x_te = test_data[:, :-1]
@@ -17,8 +19,9 @@ def get_facebook_data(args):
     x_al = np.concatenate([x_tr, x_te], axis=0)
     y_al = np.concatenate([y_tr, y_te], axis=0)
 
+    # 50000 for training, rest for validation
     x_tr, x_va, y_tr, y_va = train_test_split(
-        x_tr, y_tr, test_size=0.2, random_state=args.seed
+        x_tr, y_tr, train_size=0.5, random_state=args.seed
     )
 
     s_tr_x = StandardScaler().fit(x_tr)
@@ -45,10 +48,55 @@ def get_facebook_data(args):
 
     return out_namespace
 
+def get_large_data(args):
+    data = np.loadtxt("{}/{}.txt".format(args.data_dir, args.data))
+    data = data[~np.isnan(data).any(axis=1)]
+
+    x_al = data[:, :-1]
+    y_al = data[:, -1].reshape(-1, 1)
+
+    # 50000 for training, 50000 for validation, 100000 for testing
+    x_tr, x_te, y_tr, y_te = train_test_split(
+        x_al, y_al, test_size=100000, random_state=args.seed
+    )
+    x_tr, x_va, y_tr, y_va = train_test_split(
+        x_tr, y_tr, test_size=50000, random_state=args.seed
+    )
+    x_tr, _, y_tr, _ = train_test_split(
+        x_tr, y_tr, train_size=50000, random_state=args.seed
+    )
+    s_tr_x = StandardScaler().fit(x_tr)
+    s_tr_y = StandardScaler().fit(y_tr)
+
+    x_tr = torch.Tensor(s_tr_x.transform(x_tr))
+    x_va = torch.Tensor(s_tr_x.transform(x_va))
+    x_te = torch.Tensor(s_tr_x.transform(x_te))
+
+    y_tr = torch.Tensor(s_tr_y.transform(y_tr))
+    y_va = torch.Tensor(s_tr_y.transform(y_va))
+    y_te = torch.Tensor(s_tr_y.transform(y_te))
+
+    y_al = torch.Tensor(s_tr_y.transform(y_al))
+
+    out_namespace = Namespace(
+        x_tr=x_tr,
+        x_va=x_va,
+        x_te=x_te,
+        y_tr=y_tr,
+        y_va=y_va,
+        y_te=y_te,
+        y_al=y_al,
+    )
+    return out_namespace
+
 def get_uci_data(args):
     if args.data == 'facebook':
         return get_facebook_data(args)
+    if args.data in ['fusion']:
+        return get_large_data(args)
+        
     data = np.loadtxt("{}/{}.txt".format(args.data_dir, args.data))
+    data = data[~np.isnan(data).any(axis=1)]
     x_al = data[:, :-1]
     y_al = data[:, -1].reshape(-1, 1)
 
