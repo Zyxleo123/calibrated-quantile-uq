@@ -249,6 +249,10 @@ def fix_inputs(inputs: Dict) -> Dict:
 		new_inputs["boot"] = 0
 	if inputs["loss"] == "maqr":
 		new_inputs["num_ep"] = inputs["num_ep"] // 40
+		new_inputs["wait"] = 5
+	else:
+		new_inputs["wait"] = inputs["num_ep"] // 5
+	
 	return new_inputs
 
 def invalid_inputs(inputs: Dict) -> bool:

@@ -100,6 +100,12 @@ def parse_args():
     parser.add_argument(
         "--num_ep", type=int, default=1000, help="number of epochs"
     )
+    parser.add_argument(
+        "--wait",
+        type=int,
+        default=200,
+        help="number of epochs to wait before early stopping",
+    )
     parser.add_argument("--nl", type=int, default=1, help="number of layers")
     parser.add_argument("--hs", type=int, default=32, help="hidden size")
 
@@ -485,7 +491,7 @@ if __name__ == "__main__":
                 ece_q_list_validation_device if args.loss != 'maqr' else None,
                 batch_q=batch_loss if args.loss != 'maqr' else True,
                 curr_ep=ep,
-                num_wait=args.num_ep // 10,
+                num_wait=args.wait,
                 args=args,
             )
 
