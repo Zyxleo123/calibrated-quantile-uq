@@ -27,6 +27,8 @@ from normal_regression import gen_model
 from utils.q_model_ens import QModelEns
 from utils.misc_utils import test_uq
 
+from data.fetch_data import get_uci_data
+
 def reset_seeds(seed):
     random.seed(seed)
     np.random.seed(seed)
@@ -137,7 +139,7 @@ def get_dist_matrix(x_arr, type, kernel_length_scales, num_in_bin):
     dists_list = []
 
     #print('Making dist matrix')
-    for pt_idx in tqdm.tqdm(range(num_pts)):
+    for pt_idx in range(num_pts):
         curr_pt = x_arr[pt_idx]
 
         if type == 'euclidean':
@@ -489,7 +491,6 @@ def main(from_main_py=False, args=None):
             SEEDS = [args.seed]
 
     for dataset in datasets:
-        print("Dataset:",dataset)
         per_seed_cali = []
         per_seed_sharp = []
         per_seed_gcali = []
@@ -502,17 +503,19 @@ def main(from_main_py=False, args=None):
         per_seed_recal_cali = []
         per_seed_recal_sharp = []
         
-        for s in tqdm.tqdm(SEEDS):
+        for s in SEEDS:
             """ set seed """
             seed = s
             reset_seeds(seed)
 
             """ load data """
-            data = np.loadtxt('data/{}/{}.txt'.format('Noisy_UCI_Datasets' if args.noisy else 'UCI_Datasets', dataset))
-            x_al = data[:, :-1]
-            y_al = data[:, -1].reshape(-1, 1)
+            # data = np.loadtxt('data/{}/{}.txt'.format('Noisy_UCI_Datasets' if args.noisy else 'UCI_Datasets', dataset))
+            # x_al = data[:, :-1]
+            # y_al = data[:, -1].reshape(-1, 1)
+            data = get_uci_data(Namespace(data=dataset, data_dir='data/UCI_Datasets', seed=seed))
 
-            x_tr, y_tr, x_va, y_va, x_te, y_te, y_al = create_data_split(x_al, y_al, seed)
+            # x_tr, y_tr, x_va, y_va, x_te, y_te, y_al = create_data_split(x_al, y_al, seed)
+            x_tr, y_tr, x_va, y_va, x_te, y_te, y_al = data.x_tr, data.y_tr, data.x_va, data.y_va, data.x_te, data.y_te, data.y_al
             y_range = (y_al.max() - y_al.min()).item()
 
             if use_gpu:
