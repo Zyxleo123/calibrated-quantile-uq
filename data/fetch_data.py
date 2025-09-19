@@ -6,7 +6,7 @@ from argparse import Namespace
 
 PR_DIR = "/zfsauton/project/public/ysc/"
 
-def get_facebook_data(args):
+def _get_facebook_data(args):
     train_data = np.loadtxt("{}/facebook_train.txt".format(args.data_dir))
     test_data = np.loadtxt("{}/facebook_test.txt".format(args.data_dir))
     train_data = train_data[~np.isnan(train_data).any(axis=1)]
@@ -48,7 +48,7 @@ def get_facebook_data(args):
 
     return out_namespace
 
-def get_large_data(args):
+def _get_fusion_data(args):
     data = np.loadtxt("{}/{}.txt".format(args.data_dir, args.data))
     data = data[~np.isnan(data).any(axis=1)]
 
@@ -89,11 +89,50 @@ def get_large_data(args):
     )
     return out_namespace
 
+def _get_elevator_data(args):
+    data = np.loadtxt("{}/{}.txt".format(args.data_dir, args.data))
+    data = data[~np.isnan(data).any(axis=1)]
+
+    x_al = data[:, :-1]
+    y_al = data[:, -1].reshape(-1, 1)
+
+    x_tr, x_te, y_tr, y_te = train_test_split(
+        x_al, y_al, test_size=0.5, random_state=args.seed
+    )
+    x_tr, x_va, y_tr, y_va = train_test_split(
+        x_tr, y_tr, test_size=0.5, random_state=args.seed
+    )
+    s_tr_x = StandardScaler().fit(x_tr)
+    s_tr_y = StandardScaler().fit(y_tr)
+
+    x_tr = torch.Tensor(s_tr_x.transform(x_tr))
+    x_va = torch.Tensor(s_tr_x.transform(x_va))
+    x_te = torch.Tensor(s_tr_x.transform(x_te))
+
+    y_tr = torch.Tensor(s_tr_y.transform(y_tr))
+    y_va = torch.Tensor(s_tr_y.transform(y_va))
+    y_te = torch.Tensor(s_tr_y.transform(y_te))
+
+    y_al = torch.Tensor(s_tr_y.transform(y_al))
+
+    out_namespace = Namespace(
+        x_tr=x_tr,
+        x_va=x_va,
+        x_te=x_te,
+        y_tr=y_tr,
+        y_va=y_va,
+        y_te=y_te,
+        y_al=y_al,
+    )
+    return out_namespace
+
 def get_uci_data(args):
     if args.data == 'facebook':
-        return get_facebook_data(args)
-    if args.data in ['fusion']:
-        return get_large_data(args)
+        return _get_facebook_data(args)
+    if args.data == 'fusion':
+        return _get_fusion_data(args)
+    if args.data == 'elevator':
+        return _get_elevator_data(args)
         
     data = np.loadtxt("{}/{}.txt".format(args.data_dir, args.data))
     data = data[~np.isnan(data).any(axis=1)]
@@ -164,7 +203,7 @@ def get_toy_data(args):
     return out_namespace
 
 
-def get_fusion_data(args):
+def _get_fusion_data(args):
 
     cur_dir = "{}/{}".format(args.data_dir, args.data)
 
