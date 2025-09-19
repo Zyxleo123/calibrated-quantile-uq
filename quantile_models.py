@@ -500,7 +500,7 @@ def average_calibration(model, X, y, args): # all done
 
 """ Sharpness """
 def mean_variance(model, X, y, args):
-    """
+    r"""
     Calculates variance of the conditional distribution using quantiles.
     E(Y) = \int_0^1 q(X, p) dp
     E(Y^2) = \int_0^1 q(X, p)^2 dp
@@ -618,8 +618,7 @@ def bag_nll(model, X, y, args): # working
             sum_squared_diff = np.sum(np.square(trial_qs - curr_quantiles))
             return sum_squared_diff
         bounds = [(init_mean - (2 * init_std), init_mean + (2 * init_std)),
-                  (1e-10, 3 * init_std)]
-
+                  (1e-10, 3 * init_std + 1e-10)]
         result = minimize(obj, x0=[init_mean, init_std], bounds=bounds)
         if not result['success']:
             print('pt {} bag not optimized well'.format(pt_idx))

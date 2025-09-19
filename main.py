@@ -6,6 +6,7 @@ import numpy as np
 import pickle as pkl
 import tqdm
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 import matplotlib.pyplot as plt
 from data.fetch_data import get_uci_data, get_toy_data, get_fusion_data
@@ -30,6 +31,7 @@ from losses import (
 )
 from quantile_models import average_calibration, bag_nll, crps_score, mpiw, interval_score, check_loss, mean_variance
 from uci_model_agn import main as maqr_main
+from calipso import main as calipso_main
 
 def get_loss_fn(loss_name):
     if loss_name == "qr":
@@ -56,6 +58,8 @@ def get_loss_fn(loss_name):
         fn = batch_interval_loss
     elif loss_name == "maqr":
         fn = mse_loss_fn
+    elif loss_name == "calipso":
+        fn = None
     else:
         raise ValueError("loss arg not valid")
 
@@ -342,6 +346,24 @@ if __name__ == "__main__":
         # For MAQR, we need to center the targets for evaluation
         y_va_centered = y_va - torch.from_numpy(pred_mean_va).to(y_va.device)
         y_te_centered = y_te - torch.from_numpy(pred_mean_te).to(y_te.device)
+    elif args.loss == 'calipso':
+        class VanillaModel(nn.Module):
+            def __init__(self, nfeatures):
+                super().__init__()
+                self.net = EnhancedMLP(
+                    input_size=nfeatures,
+                    output_size=y_tr.shape[1],
+                    hidden_size=args.hs,
+                    num_layers=args.nl,
+                    residual=args.residual,
+                    batch_norm=args.batch_norm,
+                    layer_norm=args.layer_norm,
+                    dropout=args.dropout,
+                    activation=args.activation,
+                )#.to(args.device)
+            def forward(self, x):
+                return self.net(x)
+        model_ens, loader = calipso_main(args.data, args.seed, x_tr, y_tr, x_va, y_va, args.device, VanillaModel)
     else:
         # y_va_centered = None
         # y_te_centered = None
@@ -427,6 +449,9 @@ if __name__ == "__main__":
                     xi, yi = xi.to(args.device), yi.to(args.device)
                     loss = model_ens.loss(mse_loss_fn, xi, yi, q_list=None, batch_q=True, take_step=True, args=args)
                     ep_train_loss.append(loss)
+            elif args.loss == 'calipso':
+                loss = model_ens.train_epoch(loader, x_va.to(args.device), y_va.to(args.device))
+                ep_train_loss.extend(loss)
             else:
                 if not args.boot:
                     if (ep + 1) % args.draw_group_every == 0:
