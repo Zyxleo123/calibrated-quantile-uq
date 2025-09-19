@@ -451,7 +451,7 @@ if __name__ == "__main__":
                     ep_train_loss.append(loss)
             elif args.loss == 'calipso':
                 loss = model_ens.train_epoch(loader, x_va.to(args.device), y_va.to(args.device))
-                ep_train_loss.extend(loss)
+                ep_train_loss.extend(torch.tensor(loss))
             else:
                 if not args.boot:
                     if (ep + 1) % args.draw_group_every == 0:
