@@ -125,7 +125,7 @@ DEFAULT_VALUE = {
 
 TEST_HYPERPARAMS = {
     "skip_existing": [0],
-    "data": ["boston"],
+    "data": ["facebook", "fusion", "diamonds", "elevator"],
     "lr": [1e-3],
     "bs": [64],
     "batch_norm": [0],
@@ -133,19 +133,18 @@ TEST_HYPERPARAMS = {
     "dropout": [0.0],
     "num_ens": [1],
     "boot": [0],
-    "nl": [1, 2],
-    "hs": [32, 64],
+    "nl": [1],
+    "hs": [32],
     "residual": [1],
-    "seed": [0, 1, 2],
-    "loss": ["maqr", "batch_qr"],
-	"num_ep": [300],
-    # "loss": ["batch_qr"]
+    "seed": [0],
+    "loss": ["maqr", "calipso"],
+	"num_ep": [10],
 }
 
 FULL_HYPERPARAMS = {
     "skip_existing": [1],
-    "data": ["boston", "concrete", "energy", "kin8nm", "naval", "power", "wine", "yacht", "protein", 
-			 "diamonds", "facebook", "elevators", "fusion"],
+    "data": ["protein", "boston", "concrete", "energy", "kin8nm", "naval", "power", "wine", "yacht",
+			 "diamonds", "facebook", "elevator", "fusion"],
     "lr": [1e-3],
     "bs": [64],
     "batch_norm": [0],
@@ -153,16 +152,16 @@ FULL_HYPERPARAMS = {
     "dropout": [0.0],
     "num_ens": [1],
     "boot": [0],
-    "nl": [8, 1, 2, 4],
-    "hs": [256, 32, 64, 128],
+    "nl": [8, 2, 1, 4],
+    "hs": [256, 64, 32, 128],
     "residual": [1],
     "seed": [0, 1, 2, 3, 4],
     "loss": ["maqr", "batch_qr", "batch_int", "batch_cal"],
 }
 
-NEWDATA_HYPERPARAMS = {
+LOAD1_HYPERPARAMS = {
     "skip_existing": [1],
-    "data": ["diamonds", "facebook", "elevators", "fusion"],
+    "data": ["diamonds", "facebook", "elevator"],
     "lr": [1e-3],
     "bs": [64],
     "batch_norm": [0],
@@ -170,11 +169,28 @@ NEWDATA_HYPERPARAMS = {
     "dropout": [0.0],
     "num_ens": [1],
     "boot": [0],
-    "nl": [8, 1, 2, 4],
-    "hs": [256, 32, 64, 128],
+    "nl": [8, 2, 1, 4],
+    "hs": [256, 64, 32, 128],
     "residual": [1],
     "seed": [0, 1, 2, 3, 4],
-    "loss": ["maqr", "batch_qr", "batch_int", "batch_cal"],
+    "loss": ["maqr", "batch_qr", "batch_int", "batch_cal", "calipso"],
+}
+
+LOAD2_HYPERPARAMS = {
+	"skip_existing": [1],
+    "data": ["protein", "boston", "concrete", "energy", "kin8nm", "naval", "power", "wine", "yacht", "fusion"],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "nl": [8, 2, 1, 4],
+    "hs": [256, 64, 32, 128],
+    "residual": [1],
+    "seed": [0, 1, 2, 3, 4],
+    "loss": ["maqr", "batch_qr", "batch_int", "batch_cal", "calipso"],
 }
 
 NL_HS_COMBINATIONS = [
@@ -187,7 +203,8 @@ NL_HS_COMBINATIONS = [
 HYPERPARAMS = {
 	"TEST": TEST_HYPERPARAMS,
 	"FULL": FULL_HYPERPARAMS,
-	"NEWDATA": NEWDATA_HYPERPARAMS,
+	"LOAD1": LOAD1_HYPERPARAMS,
+	"LOAD2": LOAD2_HYPERPARAMS,
 }
 
 def get_one_hot_param(inputs: dict, default_value_dict: dict) -> Optional[str]:
@@ -248,7 +265,7 @@ def fix_inputs(inputs: Dict) -> Dict:
 	if inputs["num_ens"] == 1:
 		new_inputs["boot"] = 0
 	if inputs["loss"] == "maqr":
-		new_inputs["num_ep"] = inputs["num_ep"] // 40
+		new_inputs["num_ep"] = 25
 		new_inputs["wait"] = 5
 	else:
 		new_inputs["wait"] = inputs["num_ep"] // 5

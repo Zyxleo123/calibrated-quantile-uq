@@ -78,11 +78,11 @@ def main():
                 continue
 
             # Filter job & get job name
-            if script_args.filter_type == "one-hot" and script_args.test is False:
+            if script_args.filter_type == "one-hot" and script_args.run_type != "test":
                 job_name = get_one_hot_param(inputs, DEFAULT_VALUE)
                 if job_name is None:
                     continue
-            if script_args.test:
+            if script_args.run_type == "test":
                 job_name = "test"
             job_dir = os.path.join(RESULT_BASE, script_args.name, inputs["data"], job_name)
             BASIC_INPUTS["save_dir"] = job_dir
@@ -104,7 +104,7 @@ def main():
                 # If launching fails, do not add to pending and log error
                 print(f"Failed launching {inputs}: {e}")
                 continue
-            if not script_args.test:
+            if script_args.run_type != "test":
                 time.sleep(1)
 
 if __name__ == "__main__":
