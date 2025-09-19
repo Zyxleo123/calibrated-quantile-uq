@@ -17,13 +17,12 @@ from script_utils import (dict_to_cli_args,
                           RESULT_BASE,
                           BASIC_INPUTS,
                           DEFAULT_VALUE,
-                          FULL_HYPERPARAMS,
-                          TEST_HYPERPARAMS)
+                          HYPERPARAMS)
 from utils.misc_utils import get_save_file_name
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--test", action="store_true")
+    parser.add_argument("-r", "--run_type", type=str, default="full", choices=["test", "full", "newdata"])
     parser.add_argument("-f", "--filter_type", type=str, default="one-hot", choices=["one-hot"])
     parser.add_argument("-n", "--name", type=str)
     return parser.parse_args()
@@ -50,10 +49,8 @@ signal.signal(signal.SIGINT, signal_handler)
 def main():
     from itertools import product
     script_args = parse_args()
-    if script_args.test:
-        job_pool = deque([dict(zip(TEST_HYPERPARAMS, v)) for v in product(*TEST_HYPERPARAMS.values())])
-    else:
-        job_pool = deque([dict(zip(FULL_HYPERPARAMS, v)) for v in product(*FULL_HYPERPARAMS.values())])
+    hyperparam_set = HYPERPARAMS[script_args.run_type.upper()]
+    job_pool = deque([dict(zip(hyperparam_set, v)) for v in product(*hyperparam_set.values())])
     while job_pool or job_status:
         # First, clean up finished jobs
         if job_status:

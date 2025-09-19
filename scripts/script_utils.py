@@ -110,7 +110,6 @@ BASIC_INPUTS = {
     "min_thres": 0.001,
     "max_thres": 0.15,
     "num_thres": 150,
-    "wait": 100000,
 	"num_ep": 1000,
 }
 
@@ -145,25 +144,37 @@ TEST_HYPERPARAMS = {
 
 FULL_HYPERPARAMS = {
     "skip_existing": [1],
-    "data": ["boston", "concrete", "energy", "kin8nm", "naval", "power", "wine", "yacht", "protein"],
+    "data": ["boston", "concrete", "energy", "kin8nm", "naval", "power", "wine", "yacht", "protein", 
+			 "diamonds", "facebook", "elevators", "fusion"],
     "lr": [1e-3],
     "bs": [64],
-    # "batch_norm": [0, 1],
     "batch_norm": [0],
-    # "layer_norm": [0, 1],
     "layer_norm": [0],
-    # "dropout": [0.0, 0.1, 0.3, 0.5],
     "dropout": [0.0],
-    # "num_ens": [1, 2, 5],
     "num_ens": [1],
-    # "boot": [0, 1],
     "boot": [0],
     "nl": [8, 1, 2, 4],
     "hs": [256, 32, 64, 128],
     "residual": [1],
     "seed": [0, 1, 2, 3, 4],
-    # "loss": ["maqr", "batch_qr", "batch_int", "batch_cal"],
-    "loss": ["maqr"]
+    "loss": ["maqr", "batch_qr", "batch_int", "batch_cal"],
+}
+
+NEWDATA_HYPERPARAMS = {
+    "skip_existing": [1],
+    "data": ["diamonds", "facebook", "elevators", "fusion"],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "nl": [8, 1, 2, 4],
+    "hs": [256, 32, 64, 128],
+    "residual": [1],
+    "seed": [0, 1, 2, 3, 4],
+    "loss": ["maqr", "batch_qr", "batch_int", "batch_cal"],
 }
 
 NL_HS_COMBINATIONS = [
@@ -172,6 +183,12 @@ NL_HS_COMBINATIONS = [
 	(4, 128),
 	(8, 256),
 ]
+
+HYPERPARAMS = {
+	"TEST": TEST_HYPERPARAMS,
+	"FULL": FULL_HYPERPARAMS,
+	"NEWDATA": NEWDATA_HYPERPARAMS,
+}
 
 def get_one_hot_param(inputs: dict, default_value_dict: dict) -> Optional[str]:
     """
