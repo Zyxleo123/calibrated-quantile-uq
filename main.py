@@ -32,6 +32,7 @@ from losses import (
 from quantile_models import average_calibration, bag_nll, crps_score, mpiw, interval_score, check_loss, mean_variance
 from uci_model_agn import main as maqr_main
 from calipso import main as calipso_main
+import time
 
 def get_loss_fn(loss_name):
     if loss_name == "qr":
@@ -519,9 +520,6 @@ if __name__ == "__main__":
                 num_wait=args.wait,
                 args=args,
             )
-
-            model_ens.use_device(validation_device)
-
             ece = average_calibration(
                 model_ens,
                 x_va_validation_device,
@@ -529,13 +527,15 @@ if __name__ == "__main__":
                 args=Namespace(
                     exp_props=ece_q_list_validation_device,
                     device=validation_device,
-                    metric="cal_q"
+                    metric="cal_q",
+                    calipso=args.loss == 'calipso'
                 )
             )
+            
             if ece > args.max_thres:
                 model_ens.use_device(args.device)
                 continue
-
+            
             sharp_score, _ = test_uq(
                 model_ens,
                 x_va_validation_device,
@@ -546,11 +546,11 @@ if __name__ == "__main__":
                 recal_type=None,
                 output_sharp_score_only=True
             )
+
             model_ens.use_device(args.device)
 
             va_sharp_list.append(sharp_score)
             va_ece_list.append(ece)
-
 
             frontier.insert(ece, sharp_score, deepcopy(model_ens), only_frontier=True)
 
@@ -601,7 +601,8 @@ if __name__ == "__main__":
         args=Namespace(
             exp_props=va_exp_props,
             device=testing_device,
-            metric="cal_q"
+            metric="cal_q",
+            calipso=args.loss == 'calipso'
         )
     )
 
@@ -624,7 +625,8 @@ if __name__ == "__main__":
         args=Namespace(
             exp_props=te_exp_props,
             device=testing_device,
-            metric="cal_q"
+            metric="cal_q",
+            calipso=args.loss == 'calipso'
         )
     )
 
@@ -659,7 +661,8 @@ if __name__ == "__main__":
                 device=testing_device,
                 metric="cal_q",
                 recal_model=recal_model,
-                recal_type="sklearn"
+                recal_type="sklearn",
+                calipso=args.loss == 'calipso'
             )
         )
 
@@ -682,7 +685,8 @@ if __name__ == "__main__":
                 device=testing_device,
                 metric="cal_q",
                 recal_model=recal_model,
-                recal_type="sklearn"
+                recal_type="sklearn",
+                calipso=args.loss == 'calipso'
             )
         )
         args_for_score = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99), alpha_list=torch.linspace(0.01, 0.20, 20), recal_model=recal_model, recal_type="sklearn")
@@ -694,70 +698,70 @@ if __name__ == "__main__":
         recal_te_variance = float(mean_variance(model_ens, x_te, y_te, args_for_score))
 
     metrics_controlled = []
-    with open(tqdm_out_path, 'a', buffering=1) as tqdm_out:
-        for entry in tqdm.tqdm(frontier.get_entries(), file=tqdm_out, mininterval=1.0):
-            controlled_model_ens = entry['model']
-            current_metrics_tmp = {}
-            current_metrics_tmp['model_controlled'] = controlled_model_ens
-            controlled_model_ens.use_device(testing_device)
+    # with open(tqdm_out_path, 'a', buffering=1) as tqdm_out:
+    for entry in tqdm.tqdm(frontier.get_entries(), file=tqdm_out, mininterval=1.0):
+        controlled_model_ens = entry['model']
+        current_metrics_tmp = {}
+        current_metrics_tmp['model_controlled'] = controlled_model_ens
+        controlled_model_ens.use_device(testing_device)
 
-            # Test UQ on val with controlled model
-            va_exp_props_controlled_recal = torch.linspace(-2.0, 3.0, 501, device=testing_device)
-            _, va_obs_props_controlled_recal = test_uq(
-                controlled_model_ens, x_va, y_va, va_exp_props_controlled_recal, y_range, recal_model=None, recal_type=None, output_sharp_score_only=True
-            )
+        # Test UQ on val with controlled model
+        va_exp_props_controlled_recal = torch.linspace(-2.0, 3.0, 501, device=testing_device)
+        _, va_obs_props_controlled_recal = test_uq(
+            controlled_model_ens, x_va, y_va, va_exp_props_controlled_recal, y_range, recal_model=None, recal_type=None, output_sharp_score_only=True
+        )
 
-            va_exp_props_controlled_tmp = torch.linspace(0.01, 0.99, 99, device=testing_device)
-            current_metrics_tmp['va_sharp_score_controlled'], current_metrics_tmp['va_obs_props_controlled'] = test_uq(
-                controlled_model_ens, x_va, y_va, va_exp_props_controlled_tmp, y_range, recal_model=None, recal_type=None, output_sharp_score_only=True
-            )
-            current_metrics_tmp['va_ece_controlled'] = average_calibration(
-                controlled_model_ens, x_va, y_va, args=Namespace(exp_props=va_exp_props_controlled_tmp, device=testing_device, metric="cal_q")
-            )
+        va_exp_props_controlled_tmp = torch.linspace(0.01, 0.99, 99, device=testing_device)
+        current_metrics_tmp['va_sharp_score_controlled'], current_metrics_tmp['va_obs_props_controlled'] = test_uq(
+            controlled_model_ens, x_va, y_va, va_exp_props_controlled_tmp, y_range, recal_model=None, recal_type=None, output_sharp_score_only=True
+        )
+        current_metrics_tmp['va_ece_controlled'] = average_calibration(
+            controlled_model_ens, x_va, y_va, args=Namespace(exp_props=va_exp_props_controlled_tmp, device=testing_device, metric="cal_q", calipso=args.loss == 'calipso')
+        )
 
-            # Test UQ on test with controlled model
-            te_exp_props_controlled_tmp = torch.linspace(0.01, 0.99, 99, device=testing_device)
-            current_metrics_tmp['te_sharp_score_controlled'], current_metrics_tmp['te_obs_props_controlled'] = test_uq(
-                controlled_model_ens, x_te, y_te, te_exp_props_controlled_tmp, y_range, recal_model=None, recal_type=None, output_sharp_score_only=True
+        # Test UQ on test with controlled model
+        te_exp_props_controlled_tmp = torch.linspace(0.01, 0.99, 99, device=testing_device)
+        current_metrics_tmp['te_sharp_score_controlled'], current_metrics_tmp['te_obs_props_controlled'] = test_uq(
+            controlled_model_ens, x_te, y_te, te_exp_props_controlled_tmp, y_range, recal_model=None, recal_type=None, output_sharp_score_only=True
+        )
+        current_metrics_tmp['te_ece_controlled'] = average_calibration(
+            controlled_model_ens, x_te, y_te, args=Namespace(exp_props=te_exp_props_controlled_tmp, device=testing_device, metric="cal_q", calipso=args.loss == 'calipso')
+        )
+        # Other scoring rules on test
+        args_for_score = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99), alpha_list=torch.linspace(0.01, 0.20, 20))
+        current_metrics_tmp['te_bag_nll_controlled'] = float(bag_nll(controlled_model_ens, x_te, y_te, args_for_score))
+        current_metrics_tmp['te_crps_controlled'] = float(crps_score(controlled_model_ens, x_te, y_te, args_for_score))
+        current_metrics_tmp['te_mpiw_controlled'] = float(torch.mean(mpiw(controlled_model_ens, x_te, y_te, args_for_score)))
+        current_metrics_tmp['te_interval_controlled'] = float(interval_score(controlled_model_ens, x_te, y_te, args_for_score))
+        current_metrics_tmp['te_check_controlled'] = float(check_loss(controlled_model_ens, x_te, y_te, args_for_score))
+        current_metrics_tmp['te_variance_controlled'] = float(mean_variance(controlled_model_ens, x_te, y_te, args_for_score))
+        # Recalibration for controlled model
+        if args.recal:
+            recal_model_controlled_tmp = iso_recal(va_exp_props_controlled_recal, va_obs_props_controlled_recal)
+            recal_exp_props_controlled_tmp = torch.linspace(0.01, 0.99, 99, device=testing_device)
+            # Recal on Validation
+            current_metrics_tmp['recal_va_sharp_score_controlled'], current_metrics_tmp['recal_va_obs_props_controlled'] = test_uq(
+                controlled_model_ens, x_va, y_va, recal_exp_props_controlled_tmp, y_range, recal_model=recal_model_controlled_tmp, recal_type="sklearn", output_sharp_score_only=True
             )
-            current_metrics_tmp['te_ece_controlled'] = average_calibration(
-                controlled_model_ens, x_te, y_te, args=Namespace(exp_props=te_exp_props_controlled_tmp, device=testing_device, metric="cal_q")
+            current_metrics_tmp['recal_va_ece_controlled'] = average_calibration(
+                controlled_model_ens, x_va, y_va, args=Namespace(exp_props=recal_exp_props_controlled_tmp, device=testing_device, metric="cal_q", recal_model=recal_model_controlled_tmp, recal_type="sklearn", calipso=args.loss == 'calipso')
             )
-            # Other scoring rules on test
-            args_for_score = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99), alpha_list=torch.linspace(0.01, 0.20, 20))
-            current_metrics_tmp['te_bag_nll_controlled'] = float(bag_nll(controlled_model_ens, x_te, y_te, args_for_score))
-            current_metrics_tmp['te_crps_controlled'] = float(crps_score(controlled_model_ens, x_te, y_te, args_for_score))
-            current_metrics_tmp['te_mpiw_controlled'] = float(torch.mean(mpiw(controlled_model_ens, x_te, y_te, args_for_score)))
-            current_metrics_tmp['te_interval_controlled'] = float(interval_score(controlled_model_ens, x_te, y_te, args_for_score))
-            current_metrics_tmp['te_check_controlled'] = float(check_loss(controlled_model_ens, x_te, y_te, args_for_score))
-            current_metrics_tmp['te_variance_controlled'] = float(mean_variance(controlled_model_ens, x_te, y_te, args_for_score))
-            # Recalibration for controlled model
-            if args.recal:
-                recal_model_controlled_tmp = iso_recal(va_exp_props_controlled_recal, va_obs_props_controlled_recal)
-                recal_exp_props_controlled_tmp = torch.linspace(0.01, 0.99, 99, device=testing_device)
-                # Recal on Validation
-                current_metrics_tmp['recal_va_sharp_score_controlled'], current_metrics_tmp['recal_va_obs_props_controlled'] = test_uq(
-                    controlled_model_ens, x_va, y_va, recal_exp_props_controlled_tmp, y_range, recal_model=recal_model_controlled_tmp, recal_type="sklearn", output_sharp_score_only=True
-                )
-                current_metrics_tmp['recal_va_ece_controlled'] = average_calibration(
-                    controlled_model_ens, x_va, y_va, args=Namespace(exp_props=recal_exp_props_controlled_tmp, device=testing_device, metric="cal_q", recal_model=recal_model_controlled_tmp, recal_type="sklearn")
-                )
-                # Recal on Testing
-                current_metrics_tmp['recal_te_sharp_score_controlled'], current_metrics_tmp['recal_te_obs_props_controlled'] = test_uq(
-                    controlled_model_ens, x_te, y_te, recal_exp_props_controlled_tmp, y_range, recal_model=recal_model_controlled_tmp, recal_type="sklearn", output_sharp_score_only=True
-                )
-                current_metrics_tmp['recal_te_ece_controlled'] = average_calibration(
-                    controlled_model_ens, x_te, y_te, args=Namespace(exp_props=recal_exp_props_controlled_tmp, device=testing_device, metric="cal_q", recal_model=recal_model_controlled_tmp, recal_type="sklearn")
-                )
-                # Other scoring rules
-                args_for_score = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99), alpha_list=torch.linspace(0.01, 0.20, 20), recal_model=recal_model_controlled_tmp, recal_type="sklearn")
-                current_metrics_tmp['recal_te_bag_nll_controlled'] = float(bag_nll(controlled_model_ens, x_te, y_te, args_for_score))
-                current_metrics_tmp['recal_te_crps_controlled'] = float(crps_score(controlled_model_ens, x_te, y_te, args_for_score))
-                current_metrics_tmp['recal_te_mpiw_controlled'] = float(torch.mean(mpiw(controlled_model_ens, x_te, y_te, args_for_score)))
-                current_metrics_tmp['recal_te_interval_controlled'] = float(interval_score(controlled_model_ens, x_te, y_te, args_for_score))
-                current_metrics_tmp['recal_te_check_controlled'] = float(check_loss(controlled_model_ens, x_te, y_te, args_for_score))
-                current_metrics_tmp['recal_te_variance_controlled'] = float(mean_variance(controlled_model_ens, x_te, y_te, args_for_score))
-            metrics_controlled.append(current_metrics_tmp)
+            # Recal on Testing
+            current_metrics_tmp['recal_te_sharp_score_controlled'], current_metrics_tmp['recal_te_obs_props_controlled'] = test_uq(
+                controlled_model_ens, x_te, y_te, recal_exp_props_controlled_tmp, y_range, recal_model=recal_model_controlled_tmp, recal_type="sklearn", output_sharp_score_only=True
+            )
+            current_metrics_tmp['recal_te_ece_controlled'] = average_calibration(
+                controlled_model_ens, x_te, y_te, args=Namespace(exp_props=recal_exp_props_controlled_tmp, device=testing_device, metric="cal_q", recal_model=recal_model_controlled_tmp, recal_type="sklearn", calipso=args.loss == 'calipso')
+            )
+            # Other scoring rules
+            args_for_score = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99), alpha_list=torch.linspace(0.01, 0.20, 20), recal_model=recal_model_controlled_tmp, recal_type="sklearn")
+            current_metrics_tmp['recal_te_bag_nll_controlled'] = float(bag_nll(controlled_model_ens, x_te, y_te, args_for_score))
+            current_metrics_tmp['recal_te_crps_controlled'] = float(crps_score(controlled_model_ens, x_te, y_te, args_for_score))
+            current_metrics_tmp['recal_te_mpiw_controlled'] = float(torch.mean(mpiw(controlled_model_ens, x_te, y_te, args_for_score)))
+            current_metrics_tmp['recal_te_interval_controlled'] = float(interval_score(controlled_model_ens, x_te, y_te, args_for_score))
+            current_metrics_tmp['recal_te_check_controlled'] = float(check_loss(controlled_model_ens, x_te, y_te, args_for_score))
+            current_metrics_tmp['recal_te_variance_controlled'] = float(mean_variance(controlled_model_ens, x_te, y_te, args_for_score))
+        metrics_controlled.append(current_metrics_tmp)
     # Compute marginal sharpness of the target variable
     va_marginal_sharpness = compute_marginal_sharpness(y_va, y_range)
     te_marginal_sharpness = compute_marginal_sharpness(y_te, y_range)

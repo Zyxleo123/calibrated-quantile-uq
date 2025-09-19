@@ -505,10 +505,13 @@ class quantile_model_ensemble(nn.Module):
             # Group by unique p and compute once per level; calipso doesn't need extra checks
             unique_p, inverse_idx = torch.unique(p, sorted=True, return_inverse=True)
             out = torch.empty((x.shape[0], 1), device=self.output_device, dtype=x.dtype)
+
+            preds = self.get_quantiles(x, unique_p)
+
             for up_idx, up in enumerate(unique_p):
                 rows = (inverse_idx == up_idx)
-                preds_group = self.get_quantiles(x[rows], up.view(1))
-                out[rows] = preds_group
+                preds_group = preds[rows, up_idx]
+                out[rows] = preds_group.reshape(-1, 1)
         return out
 
     def predict_q(self, x, q_list=None, ens_pred_type="conf", recal_model=None, recal_type=None):
