@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 import matplotlib.pyplot as plt
-from data.fetch_data import get_uci_data, get_toy_data, get_fusion_data
+from data.fetch_data import get_uci_data, get_toy_data
 from utils.misc_utils import (
     test_uq,
     set_seeds,
