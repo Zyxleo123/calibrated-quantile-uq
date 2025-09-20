@@ -61,7 +61,7 @@ def parse_nvidia_smi_output(output: str) -> List[dict]:
 	return res
 
 
-def find_available_gpus(min_free_mb: int = 1000) -> List[int]:
+def find_available_gpus(min_free_mb: int = 1000, choices=None) -> List[int]:
 	"""
 	Return list of GPU indices that have at least min_free_mb free memory.
 	If nvidia-smi is not available, returns empty list.
@@ -70,27 +70,18 @@ def find_available_gpus(min_free_mb: int = 1000) -> List[int]:
 	if out is None:
 		return []
 	infos = parse_nvidia_smi_output(out)
-	available = [info["index"] for info in infos if info["memory.free"] >= min_free_mb]
+	available = [info["index"] for info in infos if info["memory.free"] >= min_free_mb and (choices is None or info["index"] in choices)]
 	return available
 
 
-def pick_free_gpu(min_free_mb: int = 1000) -> Optional[int]:
-	"""
-	Pick and return the first GPU index with at least min_free_mb free memory.
-	Returns None if none available.
-	"""
-	avail = find_available_gpus(min_free_mb=min_free_mb)
-	return avail[0] if avail else None
-
-_last_gpu_idx = -1  # global variable to track last used GPU index
-
-def pick_free_gpu_round_robin(min_free_mb: int = 1000) -> Optional[int]:
+_last_gpu_idx = -1
+def pick_free_gpu_round_robin(min_free_mb: int = 1000, choices=None) -> Optional[int]:
 	"""
 	Pick and return a GPU index with at least min_free_mb free memory in round-robin order.
 	Returns None if none available.
 	"""
 	global _last_gpu_idx
-	available = find_available_gpus(min_free_mb=min_free_mb)
+	available = find_available_gpus(min_free_mb=min_free_mb, choices=choices)
 	if not available:
 		return None
 	available_sorted = sorted(available)
@@ -125,7 +116,7 @@ DEFAULT_VALUE = {
 
 TEST_HYPERPARAMS = {
     "skip_existing": [0],
-    "data": ["facebook", "fusion", "diamonds", "elevator"],
+    "data": ["fusion", "elevator"],
     "lr": [1e-3],
     "bs": [64],
     "batch_norm": [0],
@@ -139,6 +130,25 @@ TEST_HYPERPARAMS = {
     "seed": [0],
     "loss": ["maqr", "calipso"],
 	"num_ep": [10],
+}
+
+PRERUN_HYPERPARAMS = {
+	"skip_existing": [0],
+    "loss": ["maqr"],
+    "data": [
+			 "elevator", "fusion"],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "nl": [1],
+    "hs": [32],
+    "boot": [0],
+    "residual": [1],
+    "seed": [0, 1, 2, 3, 4],
+	"num_ep": [5],
 }
 
 FULL_HYPERPARAMS = {
@@ -155,13 +165,13 @@ FULL_HYPERPARAMS = {
     "nl": [8, 2, 1, 4],
     "hs": [256, 64, 32, 128],
     "residual": [1],
-    "seed": [0, 1, 2, 3, 4],
+    "seed": [0, 1, 2],
     "loss": ["maqr", "batch_qr", "batch_int", "batch_cal"],
 }
 
 LOAD1_HYPERPARAMS = {
     "skip_existing": [1],
-    "data": ["diamonds", "facebook", "elevator"],
+    "data": ["diamonds", "facebook", "elevator", "fusion"],
     "lr": [1e-3],
     "bs": [64],
     "batch_norm": [0],
@@ -172,8 +182,8 @@ LOAD1_HYPERPARAMS = {
     "nl": [8, 2, 1, 4],
     "hs": [256, 64, 32, 128],
     "residual": [1],
-    "seed": [0, 1, 2, 3, 4],
-    "loss": ["maqr", "batch_qr", "batch_int", "batch_cal", "calipso"],
+    "seed": [0, 1, 2],
+    "loss": ["maqr", "batch_qr", "batch_int", "batch_cal"],
 }
 
 LOAD2_HYPERPARAMS = {
@@ -205,6 +215,7 @@ HYPERPARAMS = {
 	"FULL": FULL_HYPERPARAMS,
 	"LOAD1": LOAD1_HYPERPARAMS,
 	"LOAD2": LOAD2_HYPERPARAMS,
+	"PRERUN": PRERUN_HYPERPARAMS,
 }
 
 def get_one_hot_param(inputs: dict, default_value_dict: dict) -> Optional[str]:
