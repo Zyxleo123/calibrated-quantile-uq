@@ -563,7 +563,8 @@ if __name__ == "__main__":
         x_te.to(testing_device),
         y_te.to(testing_device),
     )
-    model_ens.model = [best_va_model if best_va_model is not None else model for best_va_model, model in zip(model_ens.best_va_model, model_ens.model)]
+    if args.loss != 'calipso':
+        model_ens.model = [best_va_model if best_va_model is not None else model for best_va_model, model in zip(model_ens.best_va_model, model_ens.model)]
     model_ens.use_device(testing_device)
 
     if args.loss == 'maqr':
