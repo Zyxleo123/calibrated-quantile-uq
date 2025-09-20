@@ -203,35 +203,35 @@ def get_toy_data(args):
     return out_namespace
 
 
-def _get_fusion_data(args):
+# def _get_fusion_data(args):
 
-    cur_dir = "{}/{}".format(args.data_dir, args.data)
+#     cur_dir = "{}/{}".format(args.data_dir, args.data)
 
-    print("loading fusion data {}".format(args.data))
-    x_tr = np.load("{}/x_tr_{}.npy".format(cur_dir, args.data))
-    y_tr = np.load("{}/y_tr_{}.npy".format(cur_dir, args.data))
-    x_va = np.load("{}/x_va_{}.npy".format(cur_dir, args.data))
-    y_va = np.load("{}/y_va_{}.npy".format(cur_dir, args.data))
-    x_te = np.load("{}/x_te_{}.npy".format(cur_dir, args.data))
-    y_te = np.load("{}/y_te_{}.npy".format(cur_dir, args.data))
-    y_al = np.concatenate([y_tr, y_va, y_te], axis=0)
+#     print("loading fusion data {}".format(args.data))
+#     x_tr = np.load("{}/x_tr_{}.npy".format(cur_dir, args.data))
+#     y_tr = np.load("{}/y_tr_{}.npy".format(cur_dir, args.data))
+#     x_va = np.load("{}/x_va_{}.npy".format(cur_dir, args.data))
+#     y_va = np.load("{}/y_va_{}.npy".format(cur_dir, args.data))
+#     x_te = np.load("{}/x_te_{}.npy".format(cur_dir, args.data))
+#     y_te = np.load("{}/y_te_{}.npy".format(cur_dir, args.data))
+#     y_al = np.concatenate([y_tr, y_va, y_te], axis=0)
 
-    x_tr = torch.Tensor(x_tr)
-    y_tr = torch.Tensor(y_tr)
-    x_va = torch.Tensor(x_va)
-    y_va = torch.Tensor(y_va)
-    x_te = torch.Tensor(x_te)
-    y_te = torch.Tensor(y_te)
-    y_al = torch.Tensor(y_al)
+#     x_tr = torch.Tensor(x_tr)
+#     y_tr = torch.Tensor(y_tr)
+#     x_va = torch.Tensor(x_va)
+#     y_va = torch.Tensor(y_va)
+#     x_te = torch.Tensor(x_te)
+#     y_te = torch.Tensor(y_te)
+#     y_al = torch.Tensor(y_al)
 
-    out_namespace = Namespace(
-        x_tr=x_tr,
-        x_va=x_va,
-        x_te=x_te,
-        y_tr=y_tr,
-        y_va=y_va,
-        y_te=y_te,
-        y_al=y_al,
-    )
+#     out_namespace = Namespace(
+#         x_tr=x_tr,
+#         x_va=x_va,
+#         x_te=x_te,
+#         y_tr=y_tr,
+#         y_va=y_va,
+#         y_te=y_te,
+#         y_al=y_al,
+#     )
 
-    return out_namespace
+#     return out_namespace
