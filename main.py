@@ -438,6 +438,10 @@ if __name__ == "__main__":
     else:
         tqdm_out_path = os.path.join(os.environ["SCRATCH"], "tqdm", os.path.basename(save_file_name) + ".log")
         tqdm_out = open(tqdm_out_path, 'w', buffering=1)
+    # train_time = 0
+    # validation_time = 0
+    # test_time = 0
+    # frontier_time = 0
     for ep in tqdm.tqdm(range(args.num_ep), file=tqdm_out, mininterval=1.0):
         if model_ens.done_training:
             print("Done training ens at EP {}".format(ep))
@@ -445,6 +449,7 @@ if __name__ == "__main__":
 
         # Take train step
         # list of losses from each batch, for one epoch
+        # train_time -= time.time()
         ep_train_loss = []
         if args.loss == 'maqr':
             for (xi, yi) in loader:
@@ -508,7 +513,8 @@ if __name__ == "__main__":
                     ep_train_loss.append(loss)
         ep_tr_loss = np.nanmean(np.stack(ep_train_loss, axis=0), axis=0)
         tr_loss_list.append(ep_tr_loss)
-
+        # train_time += time.time()
+        # validation_time -= time.time()
         ece = average_calibration(
             model_ens,
             x_va_validation_device,
@@ -520,11 +526,11 @@ if __name__ == "__main__":
                 calipso=args.loss == 'calipso'
             )
         )
-        
+        # validation_time += time.time()
         if ece > args.max_thres:
             model_ens.use_device(args.device)
             continue
-        
+        # test_time -= time.time()
         sharp_score, _ = test_uq(
             model_ens,
             x_va_validation_device,
@@ -535,13 +541,15 @@ if __name__ == "__main__":
             recal_type=None,
             output_sharp_score_only=True
         )
-
+        # test_time += time.time()
         model_ens.use_device(args.device)
 
         va_sharp_list.append(sharp_score)
         va_ece_list.append(ece)
 
         frontier.insert(ece, sharp_score, deepcopy(model_ens), only_frontier=True)
+
+        # print(f"Train: {train_time:.2f}, Val: {validation_time:.2f}, Test: {test_time:.2f}")
 
     testing_device = torch.device('cpu')
     x_tr, y_tr, x_va, y_va, x_te, y_te = (

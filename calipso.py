@@ -212,7 +212,7 @@ class quantile_model(nn.Module):
 
 ## SPECIFY CALIBRATED QUANTILE MODEL ENSEMBLE
 class quantile_model_ensemble(nn.Module):
-    def __init__(self, X, Y, vanilla_model, half_q_levels: Union[int, torch.Tensor], output_device, vanilla_weights_path = None, avg_weights=False):
+    def __init__(self, X, Y, vanilla_model, half_q_levels: Union[int, torch.Tensor], output_device, vanilla_weights = None, avg_weights=False):
         super().__init__()
         self.done_training = False
         self.output_device = output_device
@@ -238,14 +238,14 @@ class quantile_model_ensemble(nn.Module):
         for i in range(len(quantile_model_levels)):
             vanilla_quantile_model_lower = vanilla_model(nfeatures = X.shape[1])
             vanilla_quantile_model_upper = vanilla_model(nfeatures = X.shape[1])
-            if isinstance(vanilla_weights_path, list):
-                path = vanilla_weights_path[i]
+            if isinstance(vanilla_weights, list):
+                weights = vanilla_weights[i]
             else:
-                path = vanilla_weights_path
-            if path is not None:
+                weights = vanilla_weights
+            if weights is not None:
                 # Initialize weights from normal regression on training set
-                lower_weights = torch.load(path, weights_only=True, map_location=output_device)
-                upper_weights = copy.deepcopy(lower_weights)
+                lower_weights = copy.deepcopy(weights)#torch.load(path, weights_only=True, map_location=output_device)
+                upper_weights = copy.deepcopy(weights)#copy.deepcopy(lower_weights)
                 if avg_weights:
                     for key in lower_weights:
                         upper_weights[key] = (lower_weights[key].to(output_device) + vanilla_quantile_model_upper.state_dict()[key].to(output_device)) / 2
@@ -442,14 +442,21 @@ class quantile_model_ensemble(nn.Module):
         self.train()
         batch_loss = []
         self.lambda_reg_vec *= self.scheduler.step()
+        # import time
+        # time1 = 0
+        # time2 = 0
+        # time3 = 0
         for Xbatch, Ybatch in dataloader:
+            # time1 -= time.time()
             Xbatch, Ybatch = Xbatch.to(self.output_device), Ybatch.to(self.output_device)
             quantile_preds = self.forward(Xbatch)
             loss = self.loss_fun(quantile_preds,Ybatch.repeat(1, quantile_preds.shape[1]))
+            # time1 += time.time()
 
             if X_val is not None:
+                # time2 -= time.time()
                 self.eval()
-                quantile_preds_val = self.forward(X_val)
+                quantile_preds_val = self.forward(X_val) # Majority of the val time spent here
                 diff_val = quantile_preds_val - Y_val
                 loss_ece = 0
                 total_q_levels = torch.hstack([self.half_q_levels, 1-self.half_q_levels.flip(0)]).to(self.output_device)
@@ -457,6 +464,7 @@ class quantile_model_ensemble(nn.Module):
                     loss_ece += torch.quantile(diff_val[:, q], total_q_levels.flip(0)[q])**2
                 self.train()
                 loss += loss_ece
+                # time2 += time.time()
 
             for i in range(len(self.half_q_levels)):
                 lambda_reg = self.lambda_reg_vec[i]
@@ -466,10 +474,13 @@ class quantile_model_ensemble(nn.Module):
                     for params in self.upper_quantile_models[i].parameters():
                         loss += lambda_reg*params.norm()
             batch_loss.append(loss.item())
+            # time3 -= time.time()
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
+            # time3 += time.time()
         self.eval()
+        # print(f"Time1: {time1:.2f}, Time2: {time2:.2f}, Time3: {time3:.2f}")
         return batch_loss
 
     def update_va_loss(self, loss_fn, X_val, Y_val, va_te_q_list, batch_q, curr_ep, num_wait, args):
@@ -548,7 +559,7 @@ class quantile_model_ensemble(nn.Module):
         return pred_mat
 ##########################################################
 
-def gen_model(X, Y, X_val, Y_val, output_device, path, vanilla_model):
+def gen_model(X, Y, X_val, Y_val, output_device, vanilla_model, path=None):
     val = X_val is not None
     nepochs = 1000
     display = True
@@ -610,7 +621,8 @@ def gen_model(X, Y, X_val, Y_val, output_device, path, vanilla_model):
     if val:
         our_model.load_state_dict(best_weights)
 
-    torch.save(our_model.state_dict(), path)
+    if path is not None:
+        torch.save(our_model.state_dict(), path)
 
     return copy.deepcopy(our_model.state_dict())
 
@@ -643,7 +655,7 @@ class param_scheduler:
 # va_split: defines a validation size, as a fraction of the train+val size
 # cali_favoured: when using early stopping based on the best weighted sum of ECE and sharpness, cali_favoured is the weight of the ECE (sharpness has a fixed weight of 1)
 # fix_cali: if true, stops based on the ECE achieving a satisfactory level (relative to the Beyond Pinball Loss paper's reported MAQR results), else use the best weighted sum as early stopping criterion
-def run_experiment(X, Y, X_val, Y_val, output_device, vanilla_weights_path, vanilla_model):
+def run_experiment(X, Y, X_val, Y_val, output_device, vanilla_weights, vanilla_model):
     X = X.to(output_device)
     Y = Y.to(output_device)
     X_val = X_val.to(output_device)
@@ -666,7 +678,7 @@ def run_experiment(X, Y, X_val, Y_val, output_device, vanilla_weights_path, vani
     half_q_levels = torch.tensor([0, 0.025, 0.05, 0.1, 0.2])
     lambda_reg_vec = torch.tensor([0.05, 0.005, 0.005, 0.005, 0.005])
     scheduler = param_scheduler()
-    our_model = quantile_model_ensemble(X=X, Y=Y, vanilla_model=vanilla_model, half_q_levels=half_q_levels, output_device=output_device, vanilla_weights_path=[vanilla_weights_path, vanilla_weights_path, None, None, None])
+    our_model = quantile_model_ensemble(X=X, Y=Y, vanilla_model=vanilla_model, half_q_levels=half_q_levels, output_device=output_device, vanilla_weights=[vanilla_weights, vanilla_weights, None, None, None])
     optimizer = optim.Adam(our_model.parameters(), lr=1e-3)
     loss_fun = torch.nn.MSELoss()
     our_model.train()
@@ -681,13 +693,13 @@ def run_experiment(X, Y, X_val, Y_val, output_device, vanilla_weights_path, vani
 
 def main(dataset, seed, X, Y, X_val, Y_val, output_device, vanilla_model):
     run_name = 'calipso_weights'
-    Path(f'{config_path}/{run_name}/').mkdir(parents=True, exist_ok=True)
-    try:
-        Path(f'{config_path}/{run_name}/{dataset}').mkdir(parents=True, exist_ok=True)
-        weights_path = f'{config_path}/{run_name}/{dataset}/{seed}_base_model.pt'
-        if not os.path.exists(weights_path):
-            gen_model(X, Y, X_val, Y_val, output_device, weights_path, vanilla_model)
-        return run_experiment(X, Y, X_val, Y_val, output_device, weights_path, vanilla_model)
+    # Path(f'{config_path}/{run_name}/').mkdir(parents=True, exist_ok=True)
+    # try:
+    #     Path(f'{config_path}/{run_name}/{dataset}').mkdir(parents=True, exist_ok=True)
+    #     weights_path = f'{config_path}/{run_name}/{dataset}/{seed}_base_model.pt'
+    #     if not os.path.exists(weights_path):
+    weights = gen_model(X, Y, X_val, Y_val, output_device, vanilla_model, path=None)
+    return run_experiment(X, Y, X_val, Y_val, output_device, weights, vanilla_model)
 
-    except Exception as e:
-        print(traceback.format_exc())
+    # except Exception as e:
+    #     print(traceback.format_exc())
