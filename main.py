@@ -554,6 +554,8 @@ if __name__ == "__main__":
 
             frontier.insert(ece, sharp_score, deepcopy(model_ens), only_frontier=True)
 
+        # print(f"Train: {train_time:.2f}, Val: {validation_time:.2f}, Test: {test_time:.2f}")
+
     testing_device = torch.device('cpu')
     x_tr, y_tr, x_va, y_va, x_te, y_te = (
         x_tr.to(testing_device),
