@@ -96,14 +96,6 @@ def pick_free_gpu_round_robin(min_free_mb: int = 1000, choices=None) -> Optional
 
 RESULT_BASE = os.path.join(os.environ["SCRATCH"], "results")
 
-BASIC_INPUTS = {
-    "save_dir": RESULT_BASE,
-    "min_thres": 0.001,
-    "max_thres": 0.15,
-    "num_thres": 150,
-	"num_ep": 1000,
-}
-
 DEFAULT_VALUE = {
     "num_ens": 1,
     "nl": 2,
@@ -116,7 +108,7 @@ DEFAULT_VALUE = {
 
 TEST_HYPERPARAMS = {
     "skip_existing": [0],
-    "data": ["fusion", "elevator"],
+    "data": ["elevator", "fusion"],
     "lr": [1e-3],
     "bs": [64],
     "batch_norm": [0],
@@ -128,7 +120,7 @@ TEST_HYPERPARAMS = {
     "hs": [32],
     "residual": [1],
     "seed": [0],
-    "loss": ["maqr", "calipso"],
+    "loss": ["batch_int", "maqr", "calipso"],
 	"num_ep": [10],
 }
 
@@ -279,7 +271,8 @@ def fix_inputs(inputs: Dict) -> Dict:
 		new_inputs["num_ep"] = 25
 		new_inputs["wait"] = 5
 	else:
-		new_inputs["wait"] = inputs["num_ep"] // 5
+		new_inputs["num_ep"] = 1000
+		new_inputs["wait"] = 200
 	
 	return new_inputs
 

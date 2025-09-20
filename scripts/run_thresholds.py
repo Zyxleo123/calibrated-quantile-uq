@@ -13,7 +13,6 @@ from script_utils import (dict_to_cli_args,
                           fix_inputs, 
                           invalid_inputs,
                           RESULT_BASE,
-                          BASIC_INPUTS,
                           DEFAULT_VALUE,
                           HYPERPARAMS)
 from utils.misc_utils import get_save_file_name
@@ -73,7 +72,6 @@ def main():
         while job_pool and len(job_status) < MAX_JOBS:
             # Check/fix inputs
             inputs = job_pool.popleft()
-            inputs.update(BASIC_INPUTS)
             inputs = fix_inputs(inputs)
             if invalid_inputs(inputs):
                 continue
@@ -86,13 +84,13 @@ def main():
             if script_args.run_type == "test":
                 job_name = "test"
             job_dir = os.path.join(RESULT_BASE, script_args.name, inputs["data"], job_name)
-            BASIC_INPUTS["save_dir"] = job_dir
+            inputs["save_dir"] = job_dir
             os.makedirs(job_dir, exist_ok=True)
-            free_gpu = pick_free_gpu_round_robin(min_free_mb=1500, choices=script_args.gpus)
+            free_gpu = pick_free_gpu_round_robin(min_free_mb=5000, choices=script_args.gpus)
             while free_gpu is None:
                 print("No GPU available with sufficient free memory. Waiting 10 seconds...")
                 time.sleep(10)
-                free_gpu = pick_free_gpu_round_robin(min_free_mb=1500, choices=script_args.gpus)
+                free_gpu = pick_free_gpu_round_robin(min_free_mb=5000, choices=script_args.gpus)
 
             try:
                 inputs["gpu"] = free_gpu
