@@ -331,10 +331,34 @@ class QModelEns(uq_model):
         self, loss_fn, x, y, q_list, batch_q, curr_ep, num_wait, args
     ):
         if any(self.waiting):
+            # compute in parts to save memory
             with torch.no_grad():
-                va_loss = self.loss(
-                    loss_fn, x, y, q_list, batch_q, take_step=False, args=args
-                )
+                num_parts = 20
+                size_parts = len(x) // num_parts
+                loss_parts = []
+                for i in range(num_parts):
+                    if i != num_parts - 1:
+                        loss_part = self.loss(
+                            loss_fn,
+                            x[i * size_parts : (i + 1) * size_parts],
+                            y[i * size_parts : (i + 1) * size_parts],
+                            q_list,
+                            batch_q,
+                            take_step=False,
+                            args=args,
+                        )
+                    else:
+                        loss_part = self.loss(
+                            loss_fn,
+                            x[i * size_parts :],
+                            y[i * size_parts :],
+                            q_list,
+                            batch_q,
+                            take_step=False,
+                            args=args,
+                        )
+                    loss_parts.append(loss_part)
+                va_loss = torch.mean(torch.stack(loss_parts), dim=0).cpu().numpy()
 
         for idx in range(self.num_ens):
             if self.waiting[idx]:

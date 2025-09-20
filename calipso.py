@@ -473,8 +473,23 @@ class quantile_model_ensemble(nn.Module):
         return batch_loss
 
     def update_va_loss(self, loss_fn, X_val, Y_val, va_te_q_list, batch_q, curr_ep, num_wait, args):
+        # compute in parts to save memory
         with torch.no_grad():
             self.eval()
+            # num_parts = 20
+            # size_parts = len(X_val)//num_parts
+            # loss_parts = []
+            # for i in range(num_parts):
+            #     start_idx = i*size_parts
+            #     if i<num_parts-1:
+            #         end_idx = (i+1)*size_parts
+            #     else:
+            #         end_idx = len(X_val)
+            #     Xbatch, Ybatch = X_val[start_idx:end_idx].to(self.output_device), Y_val[start_idx:end_idx].to(self.output_device)
+            #     quantile_preds = self.forward(Xbatch, batch_q)
+            #     loss_part = loss_fn(quantile_preds,Ybatch.repeat(1, quantile_preds.shape[1]))
+            #     loss_parts.append(loss_part.item()*(end_idx-start_idx))
+            # loss = sum(loss_parts)/len(X_val)
             Xbatch, Ybatch = X_val.to(self.output_device), Y_val.to(self.output_device)
             quantile_preds = self.forward(Xbatch)
             loss = self.loss_fun(quantile_preds,Ybatch.repeat(1, quantile_preds.shape[1]))
