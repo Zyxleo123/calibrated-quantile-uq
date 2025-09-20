@@ -10,8 +10,6 @@ from collections import deque
 from script_utils import (dict_to_cli_args, 
                           pick_free_gpu_round_robin, 
                           get_one_hot_param,
-                          generate_plots_for_pickle, 
-                          generate_overlap_plot, 
                           fix_inputs, 
                           invalid_inputs,
                           RESULT_BASE,
@@ -22,10 +20,13 @@ from utils.misc_utils import get_save_file_name
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-r", "--run_type", type=str, default="full", choices=["test", "full", "newdata"])
+    parser.add_argument("-r", "--run_type", type=str, default="full")
     parser.add_argument("-f", "--filter_type", type=str, default="one-hot", choices=["one-hot"])
     parser.add_argument("-n", "--name", type=str)
-    return parser.parse_args()
+    parser.add_argument("--gpus", type=str, default=None)
+    args = parser.parse_args()
+    args.gpus = None if args.gpus is None else [int(x) for x in args.gpus.split(",")]
+    return args
 
 def run_main(inputs):
     cmd = ["python", "main.py"] + dict_to_cli_args(inputs)
@@ -33,7 +34,7 @@ def run_main(inputs):
     return proc
 
 
-MAX_JOBS = 30
+MAX_JOBS = 60
 
 # Close all subprocesses if the script is interrupted
 job_status = {}
@@ -87,11 +88,11 @@ def main():
             job_dir = os.path.join(RESULT_BASE, script_args.name, inputs["data"], job_name)
             BASIC_INPUTS["save_dir"] = job_dir
             os.makedirs(job_dir, exist_ok=True)
-            free_gpu = pick_free_gpu_round_robin(min_free_mb=1500)
+            free_gpu = pick_free_gpu_round_robin(min_free_mb=1500, choices=script_args.gpus)
             while free_gpu is None:
                 print("No GPU available with sufficient free memory. Waiting 10 seconds...")
                 time.sleep(10)
-                free_gpu = pick_free_gpu_round_robin(min_free_mb=1500)
+                free_gpu = pick_free_gpu_round_robin(min_free_mb=1500, choices=script_args.gpus)
 
             try:
                 inputs["gpu"] = free_gpu
