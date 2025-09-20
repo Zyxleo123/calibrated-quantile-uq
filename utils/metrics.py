@@ -88,26 +88,62 @@ def compute_hv(
 
     return results
 
-def compute_igd_discrete(
-    method_points: Dict[str, List[Point]]
+def _create_staircase_front(
+    points: List[Point], 
+    step_size: float
+) -> List[Point]:
+    """
+    Creates a denser set of points representing a staircase front using a
+    fixed interval length between samples on the ECE axis.
+    
+    Args:
+        points: The original list of (ECE, SH) points.
+        step_size: The desired distance between sampled points on the ECE axis.
+        
+    Returns:
+        A new, denser list of points representing the staircase.
+    """
+    sorted_points = sorted(points, key=lambda p: p[0])
+    interpolated_points = []
+    for i in range(len(sorted_points) - 1):
+        p1_ece, p1_sh = sorted_points[i]
+        p2_ece, _ = sorted_points[i+1]
+        
+        interpolated_points.append((p1_ece, p1_sh))
+        
+        if p2_ece <= p1_ece:
+            continue
+        current_x = p1_ece + step_size
+        while current_x < p2_ece:
+            interpolated_points.append((current_x, p1_sh))
+            current_x += step_size
+
+    interpolated_points.append(sorted_points[-1])
+    return interpolated_points
+
+
+def compute_igd_staircase(
+    method_points: Dict[str, List[Point]],
+    ece_step_size: float = None,
 ) -> Dict[str, float]:
     """
-    Calculates the Inverted Generational Distance (IGD) for each method.
-
-    IGD measures the average distance from the points on the global front to
-    the nearest point in a given method's solution set. A lower score is better.
+    Calculates the Inverted Generational Distance (IGD) for each method
+    using a staircase interpolation with a fixed step size.
 
     Args:
         method_points: A dictionary where keys are method names and values are
                        lists of (ECE, SH) points for that method.
+        ece_step_size: The fixed interval length between interpolated points
+                       on the ECE (horizontal) axis.
 
     Returns:
         A dictionary with method names as keys and their IGD score as values.
     """
     all_points = [p for points_list in method_points.values() for p in points_list]
-
     global_front_Z = get_pareto_front(all_points)
-
+    if ece_step_size is not None:
+        global_front_Z = _create_staircase_front(global_front_Z, ece_step_size)
+        
     results = {}
     Z_np = np.array(global_front_Z)
     for name, points_A in method_points.items():
@@ -116,17 +152,50 @@ def compute_igd_discrete(
         min_distances = np.min(distances_matrix, axis=1)
 
         # IGD = [ (1/|Z|) * sum(d_i^p) ] ^ (1/p)
-        igd_score = np.mean(min_distances ** 2) ** (1/2)
+        igd_score = np.mean(min_distances ** 2) ** 0.5
         results[name] = igd_score
         
     return results
 
+def compute_gd_staircase(
+    method_points: Dict[str, List[Point]],
+    ece_step_size: float=None,
+) -> Dict[str, float]:
+    """
+    Calculates the Generational Distance (GD) for each method
+    using a staircase interpolation for the Pareto front.
 
+    Args:
+        method_points: A dictionary where keys are method names and values are
+                       lists of (ECE, SH) points for that method.
+        ece_step_size: The fixed interval length between interpolated points
+                       on the ECE (horizontal) axis for the reference front.
+
+    Returns:
+        A dictionary with method names as keys and their GD score as values.
+    """
+    all_points = [p for points_list in method_points.values() for p in points_list]
+    global_front_Z = get_pareto_front(all_points)
+    if ece_step_size is not None:
+        global_front_Z = _create_staircase_front(global_front_Z, ece_step_size)
+        
+    results = {}
+    Z_np = np.array(global_front_Z)
+    for name, points_A in method_points.items():
+        A_np = np.array(points_A)
+        distances_matrix = cdist(A_np, Z_np)
+        min_distances = np.min(distances_matrix, axis=1)
+
+        # GD = [ (1/|A|) * sum(d_i^p) ] ^ (1/p) with p=2
+        gd_score = (np.mean(min_distances ** 2)) ** 0.5
+        results[name] = gd_score
+        
+    return results
 
 if __name__ == '__main__':
-    # Method A: Points are close to or on the "true" Pareto front.
+    # Method A: Points are exactly on the "true" Pareto front.
     # Method B: Good, but consistently dominated by Method A.
-    # Method C: Points are clearly worse and scattered.
+    # Method C: Points are clearly worse and scattered, far from the front.
 
     mock_data = {
         'Method A': [
@@ -147,9 +216,30 @@ if __name__ == '__main__':
 
     print("\n" + "="*50 + "\n")
 
-    print("--- Inverted Generational Distance (IGD) Analysis (Lower is Better) ---")
-    igd_scores = compute_igd_discrete(mock_data)
-    for method, score in sorted(igd_scores.items(), key=lambda item: item[1]):
+    print("--- Inverted Generational Distance (Discrete) (Lower is Better) ---")
+    igd_scores_discrete = compute_igd_staircase(mock_data)
+    for method, score in sorted(igd_scores_discrete.items(), key=lambda item: item[1]):
+        print(f"{method}: {score:.4f}")
+    
+    print("\n" + "="*50 + "\n")
+
+    print("--- Inverted Generational Distance (Staircase) (Lower is Better) ---")
+    igd_scores_staircase = compute_igd_staircase(mock_data, ece_step_size=0.01)
+    for method, score in sorted(igd_scores_staircase.items(), key=lambda item: item[1]):
+        print(f"{method}: {score:.4f}")
+
+    print("\n" + "="*50 + "\n")
+
+    print("--- Generational Distance (Discrete) (Lower is Better) ---")
+    gd_scores_discrete = compute_gd_staircase(mock_data)
+    for method, score in sorted(gd_scores_discrete.items(), key=lambda item: item[1]):
+        print(f"{method}: {score:.4f}")
+    
+    print("\n" + "="*50 + "\n")
+
+    print("--- Generational Distance (Staircase) (Lower is Better) ---")
+    gd_scores_staircase = compute_gd_staircase(mock_data, ece_step_size=0.01)
+    for method, score in sorted(gd_scores_staircase.items(), key=lambda item: item[1]):
         print(f"{method}: {score:.4f}")
         
     # --- Visualization Points (for understanding) ---
