@@ -191,9 +191,62 @@ LOAD2_HYPERPARAMS = {
     "nl": [8, 2, 1, 4],
     "hs": [256, 64, 32, 128],
     "residual": [1],
-    "seed": [0, 1, 2, 3, 4],
+    "seed": [0, 1, 2],
     "loss": ["maqr", "batch_qr", "batch_int", "batch_cal", "calipso"],
 }
+
+CALIPSO_HYPERPARAMS = {
+    "skip_existing": [1],
+    "data": ["boston", "concrete", "energy", "kin8nm", "naval", "power", "wine", "yacht",
+			 "protein", "diamonds", "facebook", "elevator", "fusion"],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "nl": [8, 2, 1, 4],
+    "hs": [256, 64, 32, 128],
+    "residual": [1],
+    "seed": [0, 1, 2],
+    "loss": ["calipso"],
+}
+
+CALIPSO2_HYPERPARAMS = {
+    "skip_existing": [1],
+	"data": ["diamonds", "facebook", "elevator", "fusion"],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "nl": [8, 2, 1, 4],
+    "hs": [256, 64, 32, 128],
+    "residual": [1],
+    "seed": [0, 1, 2],
+    "loss": ["calipso"],
+}
+
+CALIPSOREVERSE_HYPERPARAMS = {
+    "skip_existing": [1],
+    "seed": [0, 1, 2],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+	"data": ["fusion", "facebook", "elevator", "diamonds", "protein"],
+    "nl": [8],
+    "hs": [256],
+    "residual": [1],
+    "loss": ["calipso"],
+}
+
 
 NL_HS_COMBINATIONS = [
 	(1, 32),
@@ -208,6 +261,9 @@ HYPERPARAMS = {
 	"LOAD1": LOAD1_HYPERPARAMS,
 	"LOAD2": LOAD2_HYPERPARAMS,
 	"PRERUN": PRERUN_HYPERPARAMS,
+	"CALIPSO": CALIPSO_HYPERPARAMS,
+	"CALIPSO2": CALIPSO2_HYPERPARAMS,
+    "CALIPSOREVERSE": CALIPSOREVERSE_HYPERPARAMS,
 }
 
 def get_one_hot_param(inputs: dict, default_value_dict: dict) -> Optional[str]:
@@ -273,6 +329,9 @@ def fix_inputs(inputs: Dict) -> Dict:
 	else:
 		new_inputs["num_ep"] = 1000
 		new_inputs["wait"] = 200
+	if inputs["loss"] == "calipso":
+		new_inputs["num_ep"] = 100
+		new_inputs["wait"] = 20
 	
 	return new_inputs
 
