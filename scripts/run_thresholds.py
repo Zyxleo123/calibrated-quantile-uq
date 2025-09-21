@@ -23,8 +23,11 @@ def parse_args():
     parser.add_argument("-f", "--filter_type", type=str, default="one-hot", choices=["one-hot"])
     parser.add_argument("-n", "--name", type=str)
     parser.add_argument("--gpus", type=str, default=None)
+    parser.add_argument("--max_jobs", type=int, default=48)
     args = parser.parse_args()
     args.gpus = None if args.gpus is None else [int(x) for x in args.gpus.split(",")]
+    global MAX_JOBS
+    MAX_JOBS = args.max_jobs
     return args
 
 def run_main(inputs):
@@ -33,7 +36,7 @@ def run_main(inputs):
     return proc
 
 
-MAX_JOBS = 60
+MAX_JOBS = 48
 
 # Close all subprocesses if the script is interrupted
 job_status = {}
