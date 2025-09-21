@@ -1,6 +1,7 @@
 from typing import List, Tuple, Dict
 import numpy as np
 from scipy.spatial.distance import cdist
+import matplotlib.pyplot as plt
 
 Point = Tuple[float, float]
 
@@ -122,9 +123,9 @@ def _create_staircase_front(
     return interpolated_points
 
 
-def compute_igd_staircase(
+def compute_igd(
     method_points: Dict[str, List[Point]],
-    ece_step_size: float = None,
+    ece_step_size: float = 0.0,
 ) -> Dict[str, float]:
     """
     Calculates the Inverted Generational Distance (IGD) for each method
@@ -141,7 +142,7 @@ def compute_igd_staircase(
     """
     all_points = [p for points_list in method_points.values() for p in points_list]
     global_front_Z = get_pareto_front(all_points)
-    if ece_step_size is not None:
+    if ece_step_size:
         global_front_Z = _create_staircase_front(global_front_Z, ece_step_size)
         
     results = {}
@@ -151,15 +152,15 @@ def compute_igd_staircase(
         distances_matrix = cdist(Z_np, A_np)
         min_distances = np.min(distances_matrix, axis=1)
 
-        # IGD = [ (1/|Z|) * sum(d_i^p) ] ^ (1/p)
-        igd_score = np.mean(min_distances ** 2) ** 0.5
+        # IGD = (1/|Z|) [ sum(d_i^p) ] ^ (1/p)
+        igd_score = np.sum(min_distances ** 2) ** 0.5 / len(Z_np)
         results[name] = igd_score
         
     return results
 
-def compute_gd_staircase(
+def compute_gd(
     method_points: Dict[str, List[Point]],
-    ece_step_size: float=None,
+    ece_step_size: float=0.0,
 ) -> Dict[str, float]:
     """
     Calculates the Generational Distance (GD) for each method
@@ -176,7 +177,7 @@ def compute_gd_staircase(
     """
     all_points = [p for points_list in method_points.values() for p in points_list]
     global_front_Z = get_pareto_front(all_points)
-    if ece_step_size is not None:
+    if ece_step_size:
         global_front_Z = _create_staircase_front(global_front_Z, ece_step_size)
         
     results = {}
@@ -186,64 +187,152 @@ def compute_gd_staircase(
         distances_matrix = cdist(A_np, Z_np)
         min_distances = np.min(distances_matrix, axis=1)
 
-        # GD = [ (1/|A|) * sum(d_i^p) ] ^ (1/p) with p=2
-        gd_score = (np.mean(min_distances ** 2)) ** 0.5
+        # GD = (1/|A|) [ sum(d_i^p) ] ^ (1/p) with p=2
+        gd_score = np.sum(min_distances ** 2) ** 0.5 / len(A_np)
         results[name] = gd_score
         
     return results
 
-if __name__ == '__main__':
-    # Method A: Points are exactly on the "true" Pareto front.
-    # Method B: Good, but consistently dominated by Method A.
-    # Method C: Points are clearly worse and scattered, far from the front.
+def compute_igd_plus(
+    method_points: Dict[str, List[Point]],
+    ece_step_size: float = 0.0,
+    p: int = 1,
+) -> Dict[str, float]:
+    """
+    Calculates the Inverted Generational Distance Plus (IGD+) for each method.
 
-    mock_data = {
-        'Method A': [
-            (0.1, 0.9), (0.2, 0.6), (0.4, 0.3), (0.7, 0.2)
-        ],
-        'Method B': [
-            (0.15, 0.95), (0.25, 0.65), (0.45, 0.35), (0.75, 0.25)
-        ],
-        'Method C': [
-            (0.5, 0.8), (0.6, 0.5), (0.8, 0.6), (0.9, 0.4)
-        ]
-    }
+    This metric measures how far the points in the true Pareto front are from the
+    obtained set of points. It only considers distances where the obtained point
+    does not dominate the true front point. A lower value is better.
 
-    print("--- Hypervolume Ratio Analysis (Higher is Better) ---")
-    hv_ratios = compute_hv(mock_data)
-    for method, ratio in sorted(hv_ratios.items(), key=lambda item: item[1], reverse=True):
-        print(f"{method}: {ratio:.4f}")
+    The formula is: IGD+(A, Z) = (1/|Z|) * Σ_{z∈Z} min_{a∈A} ||(a - z)+||_p
+    where (v)+ = max(0, v) applied element-wise.
 
-    print("\n" + "="*50 + "\n")
+    Args:
+        method_points: A dictionary where keys are method names and values are
+                       lists of (ECE, SH) points (the obtained set A) for that method.
+        ece_step_size: The fixed interval length for staircase interpolation
+                       of the reference Pareto front (the true front Z).
+        p: The order of the norm used for distance calculation (e.g., 1 for
+           Manhattan, 2 for Euclidean).
 
-    print("--- Inverted Generational Distance (Discrete) (Lower is Better) ---")
-    igd_scores_discrete = compute_igd_staircase(mock_data)
-    for method, score in sorted(igd_scores_discrete.items(), key=lambda item: item[1]):
-        print(f"{method}: {score:.4f}")
-    
-    print("\n" + "="*50 + "\n")
+    Returns:
+        A dictionary with method names as keys and their IGD+ score as values.
+    """
+    all_points = [p for points_list in method_points.values() for p in points_list]
+    global_front_Z = get_pareto_front(all_points)
+    if ece_step_size:
+        global_front_Z = _create_staircase_front(global_front_Z, ece_step_size)
 
-    print("--- Inverted Generational Distance (Staircase) (Lower is Better) ---")
-    igd_scores_staircase = compute_igd_staircase(mock_data, ece_step_size=0.01)
-    for method, score in sorted(igd_scores_staircase.items(), key=lambda item: item[1]):
-        print(f"{method}: {score:.4f}")
+    results = {}
+    Z_np = np.array(global_front_Z)
+    k, m = Z_np.shape
 
-    print("\n" + "="*50 + "\n")
+    for name, points_A in method_points.items():
+        A_np = np.array(points_A)
+        n, _ = A_np.shape
+        diff = A_np.reshape(1, n, m) - Z_np.reshape(k, 1, m)
+        plus_diff = np.maximum(0, diff)
 
-    print("--- Generational Distance (Discrete) (Lower is Better) ---")
-    gd_scores_discrete = compute_gd_staircase(mock_data)
-    for method, score in sorted(gd_scores_discrete.items(), key=lambda item: item[1]):
-        print(f"{method}: {score:.4f}")
-    
-    print("\n" + "="*50 + "\n")
-
-    print("--- Generational Distance (Staircase) (Lower is Better) ---")
-    gd_scores_staircase = compute_gd_staircase(mock_data, ece_step_size=0.01)
-    for method, score in sorted(gd_scores_staircase.items(), key=lambda item: item[1]):
-        print(f"{method}: {score:.4f}")
+        # distance_matrix[i, j] = ||(A_np[j] - Z_np[i])+||_p
+        distances_matrix = np.linalg.norm(plus_diff, ord=p, axis=2)
+        min_distances = np.min(distances_matrix, axis=1)
+        igd_plus_score = np.mean(min_distances)
+        results[name] = igd_plus_score
         
-    # --- Visualization Points (for understanding) ---
-    all_points = [p for points_list in mock_data.values() for p in points_list]
-    global_pf = get_pareto_front(all_points)
-    print("\nGlobal Pareto Front is composed of points from Method A:")
-    print(global_pf)
+    return results
+
+def compute_gd_plus(
+    method_points: Dict[str, List[Point]],
+    ece_step_size: float = 0.0,
+    p: int = 1,
+) -> Dict[str, float]:
+    """
+    Calculates the Generational Distance Plus (GD+) for each method.
+
+    This metric measures how far the obtained points are from the true Pareto
+    front. It only considers distances where the obtained point does not dominate
+    a corresponding true front point. A lower value is better.
+
+    The formula is: GD+(A, Z) = (1/|A|) * Σ_{a∈A} min_{z∈Z} ||(a - z)+||_p
+    where (v)+ = max(0, v) applied element-wise.
+
+    Args:
+        method_points: A dictionary where keys are method names and values are
+                       lists of (ECE, SH) points (the obtained set A) for that method.
+        ece_step_size: The fixed interval length for staircase interpolation
+                       of the reference Pareto front (the true front Z).
+        p: The order of the norm used for distance calculation (e.g., 1 for
+           Manhattan, 2 for Euclidean).
+
+    Returns:
+        A dictionary with method names as keys and their GD+ score as values.
+    """
+    # Z is the reference Pareto front (approximated true front)
+    all_points = [p for points_list in method_points.values() for p in points_list]
+    global_front_Z = get_pareto_front(all_points)
+    if ece_step_size:
+        global_front_Z = _create_staircase_front(global_front_Z, ece_step_size)
+        
+    results = {}
+    Z_np = np.array(global_front_Z)
+
+    k, m = Z_np.shape
+    for name, points_A in method_points.items():
+        # A is the obtained front from a method
+        A_np = np.array(points_A)
+        n, _ = A_np.shape
+
+        diff = A_np.reshape(n, 1, m) - Z_np.reshape(1, k, m)
+        plus_diff = np.maximum(0, diff)
+        # distances_matrix[i, j] = ||(A_np[i] - Z_np[j])+||_p
+        distances_matrix = np.linalg.norm(plus_diff, ord=p, axis=2)
+        min_distances = np.min(distances_matrix, axis=1)
+        gd_plus_score = np.mean(min_distances)
+        results[name] = gd_plus_score
+        
+    return results
+
+if __name__ == '__main__':
+    from glob import glob
+    import sys
+    sys.path.append('/zfsauton2/home/yixiz/calibrated-quantile-uq')
+    from plots.plot_utils import load_pickle
+    from plots.plot_seeds import BASELINE_NAMES
+    from collections import defaultdict
+    import os
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--data-dir', '-d', type=str, required=True,
+                        help='Directory containing pickle files with ECE and SH data.')
+
+    args = parser.parse_args()
+    pkl_files = glob(os.path.join(args.data_dir, '*.pkl'))
+    method_points = defaultdict(list)  # method_name -> List of (ECE, SH)
+    for pkl_path in pkl_files:
+        method_name = [method for method in BASELINE_NAMES if method in os.path.basename(pkl_path)][0]
+        data = load_pickle(pkl_path)
+        method_points[method_name].extend(
+            list(zip(data['te_ece_controlled'], data['te_sharp_score_controlled']))
+        )
+    hv_results = compute_hv(method_points)
+    igd_results = compute_igd(method_points)
+    igdp_results = compute_igd_plus(method_points)
+    gd_results = compute_gd(method_points, ece_step_size=0.001)
+    gdp_results = compute_gd_plus(method_points, ece_step_size=0.001)
+    print("Hypervolume Ratios:")
+    for method, score in hv_results.items():
+        print(f"  {method}: {score:.4f}")
+    print("Inverted Generational Distances (IGD):")
+    for method, score in igd_results.items():
+        print(f"  {method}: {score:.4f}")
+    print("Inverted Generational Distances Plus (IGD+):")
+    for method, score in igdp_results.items():
+        print(f"  {method}: {score:.4f}")
+    print("Generational Distances (GD):")
+    for method, score in gd_results.items():
+        print(f"  {method}: {score:.4f}")
+    print("Generational Distances Plus (GD+):")
+    for method, score in gdp_results.items():
+        print(f"  {method}: {score:.4f}")

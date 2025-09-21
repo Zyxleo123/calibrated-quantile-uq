@@ -10,40 +10,23 @@ import glob
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from plots.plot_utils import load_pickle
-from utils.metrics import compute_igd, compute_gd, compute_hv
+from plots.plot_utils import (
+    load_pickle,
+    RESULTS_BASE_DIR,
+    BASELINE_NAMES,
+    SEEDS,
+    Y_METRICS,
+    TITLE_METRICS,
+    TITLE_METHODS,
+    COLORS,
+    METHOD_COLORS,
+    METHOD_MARKERS,
+    PERFORMANCE_METRICS
+)
+from plots.plot_utils import safe_get
+from utils.metrics import compute_igd, compute_gd, compute_hv, compute_igd_plus, compute_gd_plus
 
-RESULTS_BASE_DIR = os.path.join(os.environ.get('SCRATCH', '.'), "results")
-BASELINE_NAMES = ['batch_qr', 'batch_cal', 'batch_int', 'maqr', 'calipso']
-SEEDS = ['_0', '_1', '_2', '_3', '_4']
-Y_METRICS = [
-    'te_sharp_score_controlled',
-    'te_variance_controlled',
-    'te_mpiw_controlled',
-    'te_crps_controlled',
-    'te_interval_controlled',
-    'te_check_controlled',
-    'te_bag_nll_controlled',
-]
-TITLE_METRICS = {
-    'te_sharp_score_controlled': 'Sharpness',
-    'te_variance_controlled': 'Variance',
-    'te_mpiw_controlled': 'MPIW',
-    'te_crps_controlled': 'CRPS',
-    'te_interval_controlled': 'Interval Score',
-    'te_check_controlled': 'Check Score',
-    'te_bag_nll_controlled': 'Bag NLL',
-    'te_va_ece_exceedance': 'ECE Exceedance'
-}
-colors = cm.get_cmap('tab10', len(BASELINE_NAMES))
-method_colors = {method: colors(i) for i, method in enumerate(BASELINE_NAMES)}
-method_markers = {
-    'batch_qr': 'o',  # Circle
-    'batch_cal': 's', # Square
-    'batch_int': '^', # Triangle up
-    'maqr': 'D',      # Diamond
-    'calipso': 'X',   # X
-}
+
 
 
 def process_hp_dir(hp_dir: Path, key_prefix: str, title_suffix: str, filename_suffix: str, dataset_name: str, hp_config_name: str):
@@ -94,13 +77,13 @@ def process_hp_dir(hp_dir: Path, key_prefix: str, title_suffix: str, filename_su
             va_ece = data[f'va_ece_controlled'] # Needed for exceedance calculation
 
             # Store exceedance metric under the specific seed
-            y_exceedance = [max(te - va, 0) for te, va in zip(te_ece, va_ece)]
-            method_ece_y_points[seed]['te_va_ece_exceedance'][method] = [(te, ye) for te, ye in zip(te_ece, y_exceedance)]
+            y_exceedance = [max(te - va, 0) for te, va in zip(te_ece, va_ece) if va < 1]
+            method_ece_y_points[seed]['te_va_ece_exceedance'][method] = [(te, ye) for te, ye, va in zip(te_ece, y_exceedance, va_ece) if va < 1]
 
             # Store other Y_METRICS under the specific seed
             for y_metric in Y_METRICS:
                 y_val = data[f'{key_prefix}{y_metric}']
-                method_ece_y_points[seed][y_metric][method] = [(te, yv) for te, yv in zip(te_ece, y_val)]
+                method_ece_y_points[seed][y_metric][method] = [(te, yv) for te, yv, va in zip(te_ece, y_val, va_ece) if va < 1]
             
 
     # --- Step 3: Generate Report Text File ---
@@ -125,48 +108,90 @@ def process_hp_dir(hp_dir: Path, key_prefix: str, title_suffix: str, filename_su
                 # Get points for the current seed: {method: [(x,y), ...]}
                 current_method_points_for_moo = method_ece_y_points[seed][y_metric_name]
 
-                if not any(current_method_points_for_moo.values()):
-                    continue
-
+                # Compute MOO metrics for the current seed
+                igd_scores, igdp_scores, gd_scores, gdp_scores, hv_scores = {}, {}, {}, {}, {}
                 try:
                     igd_scores = compute_igd(current_method_points_for_moo)
-                    gd_scores = compute_gd(current_method_points_for_moo)
-                    hv_scores = compute_hv(current_method_points_for_moo)
-                    
-                    # Store scores for this seed
-                    for method in BASELINE_NAMES:
-                        if method in igd_scores: all_seed_scores['IGD'][method].append(igd_scores[method])
-                        if method in gd_scores: all_seed_scores['GD'][method].append(gd_scores[method])
-                        if method in hv_scores: all_seed_scores['HV'][method].append(hv_scores[method])
-
                 except Exception as e:
-                    print(f"  Error computing MOO metrics for {y_metric_name} on seed {seed}: {e}")
-            
-            # Now compute and report mean/variance
-            header = (f"  {'Method':<15} {'IGD Mean':<12} {'IGD Var':<12} {'GD Mean':<12} "
-                      f"{'GD Var':<12} {'HV Mean':<12} {'HV Var':<12}")
+                    print(f"  Error computing IGD for {hp_dir}, seed {seed}, y_metric {y_metric_name}: {e}")
+                try:
+                    igdp_scores = compute_igd_plus(current_method_points_for_moo)
+                except Exception as e:
+                    print(f"  Error computing IGD+ for {hp_dir}, seed {seed}, y_metric {y_metric_name}: {e}")
+                try:
+                    gd_scores = compute_gd(current_method_points_for_moo, ece_step_size=0.001)
+                except Exception as e:
+                    print(f"  Error computing GD for {hp_dir}, seed {seed}, y_metric {y_metric_name}: {e}")
+                try:
+                    gdp_scores = compute_gd_plus(current_method_points_for_moo, ece_step_size=0.001)
+                except Exception as e:
+                    print(f"  Error computing GD+ for {hp_dir}, seed {seed}, y_metric {y_metric_name}: {e}")
+                try:
+                    hv_scores = compute_hv(current_method_points_for_moo)
+                except Exception as e:
+                    print(f"  Error computing HV for {hp_dir}, seed {seed}, y_metric {y_metric_name}: {e}")
+                    
+                # Store scores for this seed
+                for method in BASELINE_NAMES:
+                    if method in igd_scores: all_seed_scores['IGD'][method].append(igd_scores[method])
+                    if method in igdp_scores: all_seed_scores['IGD+'][method].append(igdp_scores[method])
+                    if method in gd_scores: all_seed_scores['GD'][method].append(gd_scores[method])
+                    if method in gdp_scores: all_seed_scores['GD+'][method].append(gdp_scores[method])
+                    if method in hv_scores: all_seed_scores['HV'][method].append(hv_scores[method])
+
+            header = (f"  {'Method':<15} "
+                    f"{'IGD Mean':<15} {'IGD+ Mean':<15} {'GD Mean':<15} {'GD+ Mean':<15} {'HV Mean':<15} "
+                    f"{'IGD Std':<15} {'IGD+ Std':<15} {'GD Std':<15} {'GD+ Std':<15} {'HV Std':<15}")
             f.write(header + "\n")
-            f.write(f"  {'-'*15:<15} {'-'*12:<12} {'-'*12:<12} {'-'*12:<12} "
-                    f"{'-'*12:<12} {'-'*12:<12} {'-'*12:<12}\n")
+            f.write(f"  {'-'*15:<15} "
+                    f"{'-'*15:<15} {'-'*15:<15} {'-'*15:<15} {'-'*15:<15} {'-'*15:<15} "
+                    f"{'-'*15:<15} {'-'*15:<15} {'-'*15:<15} {'-'*15:<15} {'-'*15:<15}\n")
+
+            method_scores = {m: {} for m in PERFORMANCE_METRICS}
+            all_results = {}
 
             for method in BASELINE_NAMES:
                 scores = {}
-                for metric in ['IGD', 'GD', 'HV']:
+                for metric in PERFORMANCE_METRICS:
                     score_list = all_seed_scores[metric].get(method, [])
                     if not score_list:
-                        scores[f'{metric}_mean'], scores[f'{metric}_var'] = float('nan'), float('nan')
+                        scores[f'{metric}_mean'], scores[f'{metric}_std'] = float('nan'), float('nan')
                     elif len(score_list) == 1:
-                        scores[f'{metric}_mean'], scores[f'{metric}_var'] = score_list[0], 0.0
+                        scores[f'{metric}_mean'], scores[f'{metric}_std'] = score_list[0], 0.0
                     else:
                         scores[f'{metric}_mean'] = np.mean(score_list)
-                        scores[f'{metric}_var'] = np.var(score_list)
+                        scores[f'{metric}_std'] = np.std(score_list) / np.sqrt(len(score_list))
+
+                    method_scores[metric][method] = scores[f'{metric}_mean']
+
+                all_results[method] = scores
+
+            rankings = {metric: {} for metric in PERFORMANCE_METRICS}
+            for metric in PERFORMANCE_METRICS:
+                reverse = metric == "HV"
+                sorted_methods = sorted(method_scores[metric].items(),
+                                        key=lambda x: x[1],
+                                        reverse=reverse)
+                for rank, (m, _) in enumerate(sorted_methods, 1):
+                    rankings[metric][m] = rank
+
+            for method in BASELINE_NAMES:
+                scores = all_results[method]
+                f.write(
+                    f"  {method:<15} "
+                    f'''{scores['IGD_mean']:.6f} {f"({rankings['IGD'][method]})"} ''' + ' ' * 3 +
+                    f'''{scores['IGD+_mean']:.6f} {f"({rankings['IGD+'][method]})"} ''' + ' ' * 3 +
+                    f'''{scores['GD_mean']:.6f} {f"({rankings['GD'][method]})"} ''' + ' ' * 3 +
+                    f'''{scores['GD+_mean']:.6f} {f"({rankings['GD+'][method]})"} ''' + ' ' * 3 +
+                    f'''{scores['HV_mean']:.6f} {f"({rankings['HV'][method]})"} ''' + ' ' * 3 +
+                    f"{scores['IGD_std']:.6f} " + ' ' * 7 +
+                    f"{scores['IGD+_std']:.6f} " + ' ' * 7 +
+                    f"{scores['GD_std']:.6f} " + ' ' * 7 +
+                    f"{scores['GD+_std']:.6f} " + ' ' * 7 +
+                    f"{scores['HV_std']:.6f}\n"
+                )
                 
-                f.write(f"  {method:<15} {scores['IGD_mean']:<12.6f} {scores['IGD_var']:<12.6f} "
-                        f"{scores['GD_mean']:<12.6f} {scores['GD_var']:<12.6f} "
-                        f"{scores['HV_mean']:<12.6f} {scores['HV_var']:<12.6f}\n")
-    
-        f.write("\n" + "=" * 80 + "\n")
-    print(f"Report saved to {report_filepath}")
+            print(f"Report saved to {report_filepath}")
 
 
     # --- Step 4: Generate Scatter Plots ---
@@ -191,12 +216,14 @@ def process_hp_dir(hp_dir: Path, key_prefix: str, title_suffix: str, filename_su
                 # Unzip list of tuples into x and y coordinates
                 x_coords, y_coords = zip(*all_points_for_method)
                 
-                ax.scatter(x_coords, y_coords,
-                        label=method,
+                ax.scatter(
+                        x_coords, y_coords,
+                        label=TITLE_METHODS[method],
                         s=50,
-                        color=method_colors.get(method, 'gray'),
-                        marker=method_markers.get(method, 'o'),
-                        alpha=0.7)
+                        color=METHOD_COLORS.get(method, 'gray'),
+                        marker=METHOD_MARKERS.get(method, 'o'),
+                        alpha=0.5
+                    )
                 
                 all_x_coords.extend(x_coords)
                 all_y_coords.extend(y_coords)
@@ -227,21 +254,8 @@ def process_hp_dir(hp_dir: Path, key_prefix: str, title_suffix: str, filename_su
         
         plt.close(fig)
 
-    # Convert defaultdicts to regular dicts for the final return structure.
-    return {
-        seed: {
-            ym: dict(y_metric_data)
-            for ym, y_metric_data in seed_data.items()
-        }
-        for seed, seed_data in method_ece_y_points.items()
-    }
-
-
 def main(args):
     """Main function to find all experiment configs and generate plots."""
-    if 'SCRATCH' not in os.environ:
-        print("Warning: SCRATCH environment variable not set. Using current directory for RESULTS_BASE_DIR.")
-    
     if args.recalibrated:
         key_prefix = 'recal_'
         title_suffix = ' (Recalibrated)'
@@ -260,14 +274,10 @@ def main(args):
 
     hyperparam_dirs = [d for d in exp_dir.glob('*/*') if d.is_dir()]
 
-    all_processed_data_by_hp_dir = {} # Stores results for all hp_dirs
-    
     for hp_dir in sorted(hyperparam_dirs):
         dataset_name = hp_dir.parent.name
         hp_config_name = hp_dir.name
-        
-        processed_data_for_hp_dir = process_hp_dir(hp_dir, key_prefix, title_suffix, filename_suffix, dataset_name, hp_config_name)
-        all_processed_data_by_hp_dir[f"{dataset_name}/{hp_config_name}"] = processed_data_for_hp_dir
+        process_hp_dir(hp_dir, key_prefix, title_suffix, filename_suffix, dataset_name, hp_config_name)
     
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
