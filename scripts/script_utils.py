@@ -172,9 +172,79 @@ ELEVATOR_HYPERPARAMS = {
     "boot": [0],
     "residual": [1],
     "seed": [0, 1],
-    "loss": ["calipso", "maqr", "batch_qr", "batch_int", "batch_cal"],
+    "loss": ["calipso", "batch_cal", "batch_qr", "maqr", "batch_int"],
     "nl": [8, 2, 1, 4],
     "hs": [256, 64, 32, 128],
+}
+
+# gpu28
+ELEVATOR1_HYPERPARAMS = {
+    "skip_existing": [1],
+    "data": ["elevator"],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "residual": [1],
+    "seed": [0, 1],
+    "loss": ["calipso", "batch_cal", "batch_qr", "maqr", "batch_int"],
+    "nl": [8],
+    "hs": [256],
+}
+
+# gpu24
+ELEVATOR2_HYPERPARAMS = {
+    "skip_existing": [1],
+    "data": ["elevator"],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "residual": [1],
+    "seed": [0, 1],
+    "loss": ["calipso"],
+    "nl": [4, 2, 1],
+    "hs": [128, 64, 32],
+}
+
+ELEVATOR21_HYPERPARAMS = {
+	"skip_existing": [1],
+    "data": ["elevator"],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "residual": [1],
+    "seed": [0, 1],
+    "loss": ["calipso"],
+    "nl": [4],
+    "hs": [128],
+}
+
+ELEVATOR22_HYPERPARAMS = {
+	"skip_existing": [1],
+    "data": ["elevator"],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "residual": [1],
+    "seed": [0, 1],
+    "loss": ["calipso"],
+    "nl": [1, 2],
+    "hs": [32, 64],
 }
 
 FUSION_HYPERPARAMS = {
@@ -189,11 +259,83 @@ FUSION_HYPERPARAMS = {
     "boot": [0],
     "residual": [1],
     "seed": [0, 1],
-    "loss": ["calipso", "maqr", "batch_qr", "batch_int", "batch_cal"],
+    "loss": ["calipso", "batch_cal"],
     "nl": [8, 2, 1, 4],
     "hs": [256, 64, 32, 128],
 }
 
+# gpu29
+FUSION1_HYPERPARAMS = {
+    "skip_existing": [1],
+    "data": ["fusion"],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "residual": [1],
+    "seed": [0, 1],
+    "loss": ["calipso", "batch_cal", "batch_qr", "maqr", "batch_int"],
+    "nl": [8],
+    "hs": [256],
+}
+
+# gpu26
+FUSION2_HYPERPARAMS = {
+    "skip_existing": [1],
+    "data": ["fusion"],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "residual": [1],
+    "seed": [0, 1],
+    "loss": ["calipso", "batch_cal", "batch_qr", "maqr", "batch_int"],
+    "nl": [1, 2, 4],
+    "hs": [32, 64, 128],
+}
+
+
+FUSION21_HYPERPARAMS = {
+    "skip_existing": [1],
+    "data": ["fusion"],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "residual": [1],
+    "seed": [0, 1],
+    "loss": ["calipso", "batch_cal", "batch_qr", "maqr", "batch_int"],
+    "nl": [4],
+    "hs": [128],
+}
+
+FUSION22_HYPERPARAMS = {
+    "skip_existing": [1],
+    "data": ["fusion"],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "residual": [1],
+    "seed": [0, 1],
+    "loss": ["calipso", "batch_cal", "batch_qr", "maqr", "batch_int"],
+    "nl": [1, 2],
+    "hs": [32, 64],
+}
+
+# gpu29
 FACEBOOK_HYPERPARAMS = {
     "skip_existing": [1],
     "data": ["facebook"],
@@ -204,11 +346,45 @@ FACEBOOK_HYPERPARAMS = {
     "dropout": [0.0],
     "num_ens": [1],
     "boot": [0],
-    "nl": [8, 2, 1, 4],
-    "hs": [256, 64, 32, 128],
+    "nl": [1, 2, 4, 8],
+    "hs": [32, 64, 128, 256],
     "residual": [1],
-    "seed": [0, 1, 2],
-    "loss": ["calipso", "maqr", "batch_qr", "batch_int", "batch_cal"],
+    "seed": [0, 1],
+    "loss": ["calipso"]
+}
+
+FACEBOOK1_HYPERPARAMS = {
+    "skip_existing": [1],
+    "data": ["facebook"],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "nl": [8, 1],
+    "hs": [256, 32],
+    "residual": [1],
+    "seed": [0, 1],
+    "loss": ["calipso"]
+}
+
+FACEBOOK2_HYPERPARAMS = {
+    "skip_existing": [1],
+    "data": ["facebook"],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "nl": [2, 4],
+    "hs": [64, 128],
+    "residual": [1],
+    "seed": [0, 1],
+    "loss": ["calipso"]
 }
 
 FUSIONELEVATOR_HYPERPARAMS = {
@@ -222,9 +398,10 @@ FUSIONELEVATOR_HYPERPARAMS = {
     "boot": [0],
     "residual": [1],
     "seed": [0, 1],
-    "loss": ["batch_qr", "batch_int", "batch_cal", "maqr", "calipso"],
-    "nl": [1, 2, 4, 8],
-    "hs": [32, 64, 128, 256],
+    # "loss": ["calipso", "batch_int", "batch_cal", "batch_qr", "maqr"],
+    "loss": ["batch_int", "batch_qr", "maqr"],
+    "nl": [8, 4, 2, 1],
+    "hs": [256, 128, 64, 32],
     "data": ["fusion", "elevator"],
 }
 
@@ -260,6 +437,14 @@ HYPERPARAMS = {
     "ELEVATOR": ELEVATOR_HYPERPARAMS,
     "FUSION": FUSION_HYPERPARAMS,
     "FACEBOOK": FACEBOOK_HYPERPARAMS,
+    "FACEBOOK1": FACEBOOK1_HYPERPARAMS,
+    "FACEBOOK2": FACEBOOK2_HYPERPARAMS,
+    "ELEVATOR1": ELEVATOR1_HYPERPARAMS,
+    "ELEVATOR2": ELEVATOR2_HYPERPARAMS,
+    "FUSION1": FUSION1_HYPERPARAMS,
+    "FUSION2": FUSION2_HYPERPARAMS,
+    "FUSION21": FUSION21_HYPERPARAMS,
+    "FUSION22": FUSION22_HYPERPARAMS,
     "FUSIONELEVATOR": FUSIONELEVATOR_HYPERPARAMS,
     "SEED": SEED_HYPERPARAMS,
 }

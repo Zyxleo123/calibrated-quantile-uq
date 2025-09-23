@@ -238,6 +238,7 @@ def parse_args():
 
 if __name__ == "__main__":
     # DATA_NAMES = ['wine', 'naval', 'kin8nm', 'energy', 'yacht', 'concrete', 'power', 'boston']
+    print("Running new version")
 
     args = parse_args()
 
@@ -564,6 +565,9 @@ if __name__ == "__main__":
 
     models = [entry['model'] for entry in frontier.get_entries()]
     pkl.dump(models, open(save_file_name.replace('.pkl', '_models.pkl'), 'wb'))
+    if args.loss == 'calipso':
+        exit(0)
+    print(f"Model saved to {save_file_name.replace('.pkl', '_models.pkl')}")
 
     testing_device = torch.device('cpu')
     x_tr, y_tr, x_va, y_va, x_te, y_te = (
@@ -643,12 +647,31 @@ if __name__ == "__main__":
     )
 
     args_for_score = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99), alpha_list=torch.linspace(0.01, 0.20, 20))
-    te_bag_nll = float(bag_nll(model_ens, x_te, y_te, args_for_score))
-    te_crps = float(crps_score(model_ens, x_te, y_te, args_for_score))
-    te_mpiw = float(torch.mean(mpiw(model_ens, x_te, y_te, args_for_score)))
-    te_interval = float(interval_score(model_ens, x_te, y_te, args_for_score))
-    te_check = float(check_loss(model_ens, x_te, y_te, args_for_score))
-    te_variance = float(mean_variance(model_ens, x_te, y_te, args_for_score))
+    try:
+        if loss != 'calipso':
+            te_bag_nll = float(bag_nll(model_ens, x_te, y_te, args_for_score))
+    except:
+        te_bag_nll = float('nan')
+    try:
+        te_crps = float(crps_score(model_ens, x_te, y_te, args_for_score))
+    except:
+        te_crps = float('nan')
+    try:
+        te_mpiw = float(torch.mean(mpiw(model_ens, x_te, y_te, args_for_score)))
+    except:
+        te_mpiw = float('nan')
+    try:
+        te_interval = float(interval_score(model_ens, x_te, y_te, args_for_score))
+    except:
+        te_interval = float('nan')
+    try:
+        te_check = float(check_loss(model_ens, x_te, y_te, args_for_score))
+    except:
+        te_check = float('nan')
+    try:
+        te_variance = float(mean_variance(model_ens, x_te, y_te, args_for_score))
+    except:
+        te_variance = float('nan')
 
     if args.recal:
         recal_model = iso_recal(va_exp_props_recal, va_obs_props_recal)
@@ -702,12 +725,31 @@ if __name__ == "__main__":
             )
         )
         args_for_score = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99), alpha_list=torch.linspace(0.01, 0.20, 20), recal_model=recal_model, recal_type="sklearn")
-        recal_te_bag_nll = float(bag_nll(model_ens, x_te, y_te, args_for_score))
-        recal_te_crps = float(crps_score(model_ens, x_te, y_te, args_for_score))
-        recal_te_mpiw = float(torch.mean(mpiw(model_ens, x_te, y_te, args_for_score)))
-        recal_te_interval = float(interval_score(model_ens, x_te, y_te, args_for_score))
-        recal_te_check = float(check_loss(model_ens, x_te, y_te, args_for_score))
-        recal_te_variance = float(mean_variance(model_ens, x_te, y_te, args_for_score))
+        try:
+            if loss != 'calipso':
+                recal_te_bag_nll = float(bag_nll(model_ens, x_te, y_te, args_for_score))
+        except:
+            recal_te_bag_nll = float('nan')
+        try:
+            recal_te_crps = float(crps_score(model_ens, x_te, y_te, args_for_score))
+        except:
+            recal_te_crps = float('nan')
+        try:
+            recal_te_mpiw = float(torch.mean(mpiw(model_ens, x_te, y_te, args_for_score)))
+        except:
+            recal_te_mpiw = float('nan')
+        try:
+            recal_te_interval = float(interval_score(model_ens, x_te, y_te, args_for_score))
+        except:
+            recal_te_interval = float('nan')
+        try:
+            recal_te_check = float(check_loss(model_ens, x_te, y_te, args_for_score))
+        except:
+            recal_te_check = float('nan')
+        try:
+            recal_te_variance = float(mean_variance(model_ens, x_te, y_te, args_for_score))
+        except:
+            recal_te_variance = float('nan')
     metrics_controlled = []
     with open(tqdm_out_path, 'a', buffering=1) as tqdm_out:
         for entry in tqdm.tqdm(frontier.get_entries(), file=tqdm_out, mininterval=1.0):
@@ -740,12 +782,31 @@ if __name__ == "__main__":
             )
             # Other scoring rules on test
             args_for_score = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99), alpha_list=torch.linspace(0.01, 0.20, 20))
-            current_metrics_tmp['te_bag_nll_controlled'] = float(bag_nll(controlled_model_ens, x_te, y_te, args_for_score))
-            current_metrics_tmp['te_crps_controlled'] = float(crps_score(controlled_model_ens, x_te, y_te, args_for_score))
-            current_metrics_tmp['te_mpiw_controlled'] = float(torch.mean(mpiw(controlled_model_ens, x_te, y_te, args_for_score)))
-            current_metrics_tmp['te_interval_controlled'] = float(interval_score(controlled_model_ens, x_te, y_te, args_for_score))
-            current_metrics_tmp['te_check_controlled'] = float(check_loss(controlled_model_ens, x_te, y_te, args_for_score))
-            current_metrics_tmp['te_variance_controlled'] = float(mean_variance(controlled_model_ens, x_te, y_te, args_for_score))
+            try:
+                if loss != 'calipso':
+                    current_metrics_tmp['te_bag_nll_controlled'] = float(bag_nll(controlled_model_ens, x_te, y_te, args_for_score))
+            except:
+                current_metrics_tmp['te_bag_nll_controlled'] = float('nan')
+            try:
+                current_metrics_tmp['te_crps_controlled'] = float(crps_score(controlled_model_ens, x_te, y_te, args_for_score))
+            except:
+                current_metrics_tmp['te_crps_controlled'] = float('nan')
+            try:
+                current_metrics_tmp['te_mpiw_controlled'] = float(torch.mean(mpiw(controlled_model_ens, x_te, y_te, args_for_score)))
+            except:
+                current_metrics_tmp['te_mpiw_controlled'] = float('nan')
+            try:
+                current_metrics_tmp['te_interval_controlled'] = float(interval_score(controlled_model_ens, x_te, y_te, args_for_score))
+            except:
+                current_metrics_tmp['te_interval_controlled'] = float('nan')
+            try:
+                current_metrics_tmp['te_check_controlled'] = float(check_loss(controlled_model_ens, x_te, y_te, args_for_score))
+            except:
+                current_metrics_tmp['te_check_controlled'] = float('nan')
+            try:
+                current_metrics_tmp['te_variance_controlled'] = float(mean_variance(controlled_model_ens, x_te, y_te, args_for_score))
+            except:
+                current_metrics_tmp['te_variance_controlled'] = float('nan')
             # Recalibration for controlled model
             if args.recal:
                 recal_model_controlled_tmp = iso_recal(va_exp_props_controlled_recal, va_obs_props_controlled_recal)
@@ -766,12 +827,31 @@ if __name__ == "__main__":
                 )
                 # Other scoring rules
                 args_for_score = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99), alpha_list=torch.linspace(0.01, 0.20, 20), recal_model=recal_model_controlled_tmp, recal_type="sklearn")
-                current_metrics_tmp['recal_te_bag_nll_controlled'] = float(bag_nll(controlled_model_ens, x_te, y_te, args_for_score))
-                current_metrics_tmp['recal_te_crps_controlled'] = float(crps_score(controlled_model_ens, x_te, y_te, args_for_score))
-                current_metrics_tmp['recal_te_mpiw_controlled'] = float(torch.mean(mpiw(controlled_model_ens, x_te, y_te, args_for_score)))
-                current_metrics_tmp['recal_te_interval_controlled'] = float(interval_score(controlled_model_ens, x_te, y_te, args_for_score))
-                current_metrics_tmp['recal_te_check_controlled'] = float(check_loss(controlled_model_ens, x_te, y_te, args_for_score))
-                current_metrics_tmp['recal_te_variance_controlled'] = float(mean_variance(controlled_model_ens, x_te, y_te, args_for_score))
+                try:
+                    if loss != 'calipso':
+                        current_metrics_tmp['recal_te_bag_nll_controlled'] = float(bag_nll(controlled_model_ens, x_te, y_te, args_for_score))
+                except:
+                    current_metrics_tmp['recal_te_bag_nll_controlled'] = float('nan')
+                try:
+                    current_metrics_tmp['recal_te_crps_controlled'] = float(crps_score(controlled_model_ens, x_te, y_te, args_for_score))
+                except:
+                    current_metrics_tmp['recal_te_crps_controlled'] = float('nan')
+                try:
+                    current_metrics_tmp['recal_te_mpiw_controlled'] = float(torch.mean(mpiw(controlled_model_ens, x_te, y_te, args_for_score)))
+                except:
+                    current_metrics_tmp['recal_te_mpiw_controlled'] = float('nan')
+                try:
+                    current_metrics_tmp['recal_te_interval_controlled'] = float(interval_score(controlled_model_ens, x_te, y_te, args_for_score))
+                except:
+                    current_metrics_tmp['recal_te_interval_controlled'] = float('nan')
+                try:
+                    current_metrics_tmp['recal_te_check_controlled'] = float(check_loss(controlled_model_ens, x_te, y_te, args_for_score))
+                except:
+                    current_metrics_tmp['recal_te_check_controlled'] = float('nan')
+                try:
+                    current_metrics_tmp['recal_te_variance_controlled'] = float(mean_variance(controlled_model_ens, x_te, y_te, args_for_score))
+                except:
+                    current_metrics_tmp['recal_te_variance_controlled'] = float('nan')
             metrics_controlled.append(current_metrics_tmp)
     # Compute marginal sharpness of the target variable
     va_marginal_sharpness = compute_marginal_sharpness(y_va, y_range)

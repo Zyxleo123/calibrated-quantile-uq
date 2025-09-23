@@ -56,13 +56,13 @@ def _get_fusion_data(args):
     y_al = data[:, -1].reshape(-1, 1)
 
     x_tr, x_te, y_tr, y_te = train_test_split(
-        x_al, y_al, train_size=50000, random_state=args.seed
+        x_al, y_al, test_size=100000, random_state=args.seed
     )
-    x_va, x_te, y_va, y_te = train_test_split(
-        x_tr, y_tr, test_size=10000, random_state=args.seed
+    x_tr, x_va, y_tr, y_va = train_test_split(
+        x_tr, y_tr, test_size=50000, random_state=args.seed
     )
-    _, x_va, _, y_va = train_test_split(
-        x_tr, y_tr, test_size=10000, random_state=args.seed
+    x_tr, _, y_tr, _ = train_test_split(
+        x_tr, y_tr, train_size=50000, random_state=args.seed
     )
     s_tr_x = StandardScaler().fit(x_tr)
     s_tr_y = StandardScaler().fit(y_tr)
@@ -96,13 +96,10 @@ def _get_elevator_data(args):
     y_al = data[:, -1].reshape(-1, 1)
 
     x_tr, x_te, y_tr, y_te = train_test_split(
-        x_al, y_al, train_size=50000, random_state=args.seed
+        x_al, y_al, test_size=0.5, random_state=args.seed
     )
-    x_va, x_te, y_va, y_te = train_test_split(
-        x_tr, y_tr, test_size=10000, random_state=args.seed
-    )
-    _, x_va, _, y_va = train_test_split(
-        x_tr, y_tr, test_size=10000, random_state=args.seed
+    x_tr, x_va, y_tr, y_va = train_test_split(
+        x_tr, y_tr, test_size=0.5, random_state=args.seed
     )
     s_tr_x = StandardScaler().fit(x_tr)
     s_tr_y = StandardScaler().fit(y_tr)
