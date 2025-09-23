@@ -55,7 +55,6 @@ def _get_fusion_data(args):
     x_al = data[:, :-1]
     y_al = data[:, -1].reshape(-1, 1)
 
-    # 50000 for training, 50000 for validation, 100000 for testing
     x_tr, x_te, y_tr, y_te = train_test_split(
         x_al, y_al, test_size=100000, random_state=args.seed
     )

@@ -9,6 +9,7 @@ import subprocess
 from collections import deque
 from script_utils import (dict_to_cli_args, 
                           pick_free_gpu_round_robin, 
+                          find_available_gpus,
                           get_one_hot_param,
                           fix_inputs, 
                           invalid_inputs,
@@ -23,11 +24,13 @@ def parse_args():
     parser.add_argument("-f", "--filter_type", type=str, default="one-hot", choices=["one-hot"])
     parser.add_argument("-n", "--name", type=str)
     parser.add_argument("--gpus", type=str, default=None)
-    parser.add_argument("--max_jobs", type=int, default=48)
+    parser.add_argument("--max_jobs_per_gpu", "-m", type=int, default=1, 
+                        help="Maximum concurrent jobs allowed per GPU (replaces global max jobs).")
+    parser.add_argument("--max_jobs", type=int, default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
     args.gpus = None if args.gpus is None else [int(x) for x in args.gpus.split(",")]
-    global MAX_JOBS
-    MAX_JOBS = args.max_jobs
+    global MAX_JOBS_PER_GPU
+    MAX_JOBS_PER_GPU = args.max_jobs_per_gpu
     return args
 
 def run_main(inputs):
@@ -35,8 +38,6 @@ def run_main(inputs):
     proc = subprocess.Popen(cmd)
     return proc
 
-
-MAX_JOBS = 48
 
 # Close all subprocesses if the script is interrupted
 job_status = {}
@@ -54,8 +55,12 @@ def main():
     script_args = parse_args()
     hyperparam_set = HYPERPARAMS[script_args.run_type.upper()]
     job_pool = deque([dict(zip(hyperparam_set, v)) for v in product(*hyperparam_set.values())])
+
+    # Track running jobs per GPU
+    gpu_job_counts = {}
+
     while job_pool or job_status:
-        # First, clean up finished jobs
+        # First, clean up finished jobs and free GPU slots immediately
         if job_status:
             for pkl_file, (proc, inputs, start_time) in list(job_status.items()):
                 ret = proc.poll()
@@ -63,6 +68,9 @@ def main():
                     # still running
                     continue
                 # process finished
+                gpu_idx = inputs.get("gpu")
+                if gpu_idx is not None:
+                    gpu_job_counts[gpu_idx] = max(0, gpu_job_counts.get(gpu_idx, 0) - 1)
                 if ret == 0:
                     print(f"Process succeeded. Time: {time.time() - start_time:.1f}s. Inputs: {inputs}")
                     job_status.pop(pkl_file, None)
@@ -71,11 +79,35 @@ def main():
                     print(f"Process exited. Ret: {ret}. Time: {time.time() - start_time:.1f}s. Inputs: {inputs}")
                     job_status.pop(pkl_file, None)
                     job_pool.append(inputs)
-        # Only launch new jobs if we have capacity
-        while job_pool and len(job_status) < MAX_JOBS:
-            # Check/fix inputs
+
+        # Launch new jobs while there is work AND at least one GPU has capacity
+        while job_pool:
+            # find available GPUs with enough memory
+            available = find_available_gpus(min_free_mb=1000, choices=script_args.gpus)
+            if not available:
+                print("No GPU available with sufficient free memory. Waiting 10 seconds...")
+                time.sleep(10)
+                continue
+
+            # choose first available GPU that is under the per-GPU limit
+            available_sorted = sorted(available)
+            free_gpu = None
+            for g in available_sorted:
+                if gpu_job_counts.get(g, 0) < MAX_JOBS_PER_GPU:
+                    free_gpu = g
+                    break
+
+            if free_gpu is None:
+                # All available GPUs are at per-GPU capacity; wait a bit before retrying
+                print("All available GPUs are at per-GPU capacity. Waiting 10 seconds...")
+                time.sleep(10)
+                break  # exit inner while to allow cleanup loop to run
+
+            # We have a GPU slot; dequeue and prepare job
             inputs = job_pool.popleft()
             inputs = fix_inputs(inputs)
+            if script_args.run_type == "test":
+                inputs["num_ep"] = 400
             if invalid_inputs(inputs):
                 continue
 
@@ -89,11 +121,6 @@ def main():
             job_dir = os.path.join(RESULT_BASE, script_args.name, inputs["data"], job_name)
             inputs["save_dir"] = job_dir
             os.makedirs(job_dir, exist_ok=True)
-            free_gpu = pick_free_gpu_round_robin(min_free_mb=5000, choices=script_args.gpus)
-            while free_gpu is None:
-                print("No GPU available with sufficient free memory. Waiting 10 seconds...")
-                time.sleep(10)
-                free_gpu = pick_free_gpu_round_robin(min_free_mb=5000, choices=script_args.gpus)
 
             try:
                 inputs["gpu"] = free_gpu
@@ -101,11 +128,14 @@ def main():
                 # Launch process asynchronously and store in dict
                 proc = run_main(inputs)
                 job_status[pkl_path] = (proc, inputs, time.time())
-                print(f"GPU {free_gpu}: {inputs}")
+                gpu_job_counts[free_gpu] = gpu_job_counts.get(free_gpu, 0) + 1
+                print(f"GPU {free_gpu}({gpu_job_counts[free_gpu]}/{MAX_JOBS_PER_GPU}): {inputs}")
             except Exception as e:
                 # If launching fails, do not add to pending and log error
                 print(f"Failed launching {inputs}: {e}")
+                # ensure we don't leave the count incremented (it wasn't incremented yet in this try)
                 continue
+
             if script_args.run_type != "test":
                 time.sleep(1)
 
