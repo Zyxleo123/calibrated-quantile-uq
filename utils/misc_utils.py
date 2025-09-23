@@ -323,7 +323,7 @@ class EceSharpFrontier:
                 hi = mid
         return lo
 
-    def insert(self, new_ece, new_sharp, model_obj=None, only_frontier=False):
+    def insert(self, new_ece, new_sharp, new_epoch, model_obj=None, only_frontier=False):
         """
         Try to insert (ece_val, sharp_val, model_obj).
         Always insert. If the new sharp is worse than the left neighbor,
@@ -348,6 +348,7 @@ class EceSharpFrontier:
         new_entry = {
             "ece": self._to_float(new_ece),
             "sharp": self._to_float(new_sharp),
+            "epoch": new_epoch,
             "model": model_obj,
         }
         self.entries.insert(pos, new_entry)
@@ -358,6 +359,7 @@ class EceSharpFrontier:
                 if self.entries[i]["sharp"] > new_sharp:
                     self.entries[i]["sharp"] = new_sharp
                     self.entries[i]["model"] = model_obj
+                    self.entries[i]["epoch"] = new_epoch
         else:
             while pos + 1 < len(self.entries) and self.entries[pos + 1]["sharp"] > new_sharp:
                 self.entries.pop(pos + 1)

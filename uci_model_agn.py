@@ -615,6 +615,7 @@ def main(from_main_py=False, args=None):
                 cdf_y_va_tensor = torch.Tensor(cdf_y_va)
 
                 # save these for reuse
+                os.makedirs('maqr/cdf_data', exist_ok=True)
                 torch.save(cdf_x_tr_tensor, 'maqr/cdf_data/{}_{}_cdf_x_tr.pt'.format(dataset, seed))
                 torch.save(cdf_y_tr_tensor, 'maqr/cdf_data/{}_{}_cdf_y_tr.pt'.format(dataset, seed))
                 torch.save(cdf_x_va_tensor, 'maqr/cdf_data/{}_{}_cdf_x_va.pt'.format(dataset, seed))

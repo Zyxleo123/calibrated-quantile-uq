@@ -634,7 +634,7 @@ if __name__ == "__main__":
     )
 
     args_for_score = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99), alpha_list=torch.linspace(0.01, 0.20, 20))
-    te_bag_nll = float(bag_nll(model_ens, x_te, y_te, args_for_score))
+    # te_bag_nll = float(bag_nll(model_ens, x_te, y_te, args_for_score))
     te_crps = float(crps_score(model_ens, x_te, y_te, args_for_score))
     te_mpiw = float(torch.mean(mpiw(model_ens, x_te, y_te, args_for_score)))
     te_interval = float(interval_score(model_ens, x_te, y_te, args_for_score))
@@ -693,7 +693,7 @@ if __name__ == "__main__":
             )
         )
         args_for_score = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99), alpha_list=torch.linspace(0.01, 0.20, 20), recal_model=recal_model, recal_type="sklearn")
-        recal_te_bag_nll = float(bag_nll(model_ens, x_te, y_te, args_for_score))
+        # recal_te_bag_nll = float(bag_nll(model_ens, x_te, y_te, args_for_score))
         recal_te_crps = float(crps_score(model_ens, x_te, y_te, args_for_score))
         recal_te_mpiw = float(torch.mean(mpiw(model_ens, x_te, y_te, args_for_score)))
         recal_te_interval = float(interval_score(model_ens, x_te, y_te, args_for_score))
@@ -732,7 +732,7 @@ if __name__ == "__main__":
         )
         # Other scoring rules on test
         args_for_score = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99), alpha_list=torch.linspace(0.01, 0.20, 20))
-        current_metrics_tmp['te_bag_nll_controlled'] = float(bag_nll(controlled_model_ens, x_te, y_te, args_for_score))
+        # current_metrics_tmp['te_bag_nll_controlled'] = float(bag_nll(controlled_model_ens, x_te, y_te, args_for_score))
         current_metrics_tmp['te_crps_controlled'] = float(crps_score(controlled_model_ens, x_te, y_te, args_for_score))
         current_metrics_tmp['te_mpiw_controlled'] = float(torch.mean(mpiw(controlled_model_ens, x_te, y_te, args_for_score)))
         current_metrics_tmp['te_interval_controlled'] = float(interval_score(controlled_model_ens, x_te, y_te, args_for_score))
@@ -758,7 +758,7 @@ if __name__ == "__main__":
             )
             # Other scoring rules
             args_for_score = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99), alpha_list=torch.linspace(0.01, 0.20, 20), recal_model=recal_model_controlled_tmp, recal_type="sklearn")
-            current_metrics_tmp['recal_te_bag_nll_controlled'] = float(bag_nll(controlled_model_ens, x_te, y_te, args_for_score))
+            # current_metrics_tmp['recal_te_bag_nll_controlled'] = float(bag_nll(controlled_model_ens, x_te, y_te, args_for_score))
             current_metrics_tmp['recal_te_crps_controlled'] = float(crps_score(controlled_model_ens, x_te, y_te, args_for_score))
             current_metrics_tmp['recal_te_mpiw_controlled'] = float(torch.mean(mpiw(controlled_model_ens, x_te, y_te, args_for_score)))
             current_metrics_tmp['recal_te_interval_controlled'] = float(interval_score(controlled_model_ens, x_te, y_te, args_for_score))

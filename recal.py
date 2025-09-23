@@ -56,7 +56,8 @@ def iso_recal(exp_props, obs_props):
     elif torch.sum((within_01 == max_obs_within).float()) > 1:
         # multiple minima in within_01 ==> get last min idx
         i = beg_idx
-        while obs_props[i] < max_obs_within:
+        # while obs_props[i] < max_obs_within:
+        while i < len(obs_props) and obs_props[i] < max_obs_within:
             i += 1
         end_idx = i + 1
     elif torch.sum((within_01 == max_obs_within).float()) == 1:
