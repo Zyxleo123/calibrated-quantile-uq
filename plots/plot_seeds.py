@@ -18,7 +18,7 @@ from plots.plot_utils import (
     Y_METRICS,
     TITLE_METRICS,
     TITLE_METHODS,
-    COLORS,
+    HP_DIR_NAME_TO_FILE_NAME,
     METHOD_COLORS,
     METHOD_MARKERS,
     PERFORMANCE_METRICS
@@ -26,10 +26,7 @@ from plots.plot_utils import (
 from plots.plot_utils import safe_get
 from utils.metrics import compute_igd, compute_gd, compute_hv, compute_igd_plus, compute_gd_plus
 
-
-
-
-def process_hp_dir(hp_dir: Path, key_prefix: str, title_suffix: str, filename_suffix: str, dataset_name: str, hp_config_name: str):
+def process_hp_dir(hp_dir: Path, key_prefix: str, title_suffix: str, filename_suffix: str, dataset_name: str, hp_config_name: str) -> dict:
     """
     Processes a single hyperparameter directory:
     - Extracts data from pkl files for each method and seed.
@@ -61,7 +58,12 @@ def process_hp_dir(hp_dir: Path, key_prefix: str, title_suffix: str, filename_su
     # Find and load pkl files for each method and seed
     for method in BASELINE_NAMES:
         for seed in SEEDS:
-            pkl_filenames = glob.glob(os.path.join(hp_dir, f"*loss{method}*{seed}*.pkl"))
+            hp_filename = HP_DIR_NAME_TO_FILE_NAME[hp_config_name]
+            old_pkl_filenames = glob.glob(os.path.join(hp_dir, f"*loss{method}*{seed}*.pkl"))
+            pkl_filenames = [pkl_filename for pkl_filename in old_pkl_filenames if hp_filename in os.path.basename(pkl_filename)]
+            if len(old_pkl_filenames) != len(pkl_filenames):
+                print(f"  Note: Filtered out {set(old_pkl_filenames) - set(pkl_filenames)} not matching hp config {hp_filename} in {hp_dir}.")
+
             if not pkl_filenames:
                 print(f"  - {os.path.join(hp_dir, f'*loss{method}*{seed}*.pkl')} not found. Skipping {method} {seed}.")
                 continue
@@ -87,7 +89,7 @@ def process_hp_dir(hp_dir: Path, key_prefix: str, title_suffix: str, filename_su
             
 
     # --- Step 3: Generate Report Text File ---
-    report_filepath = hp_dir / f"performance_report{filename_suffix}.txt"
+    report_filepath = hp_dir / f"metrics_{dataset_name}_{hp_config_name}{filename_suffix}.txt"
     with open(report_filepath, 'w') as f:
         f.write(f"Performance Report for {dataset_name} / {hp_config_name}{title_suffix}\n")
         f.write("=" * 80 + "\n\n")
@@ -139,14 +141,6 @@ def process_hp_dir(hp_dir: Path, key_prefix: str, title_suffix: str, filename_su
                     if method in gdp_scores: all_seed_scores['GD+'][method].append(gdp_scores[method])
                     if method in hv_scores: all_seed_scores['HV'][method].append(hv_scores[method])
 
-            header = (f"  {'Method':<15} "
-                    f"{'IGD Mean':<15} {'IGD+ Mean':<15} {'GD Mean':<15} {'GD+ Mean':<15} {'HV Mean':<15} "
-                    f"{'IGD Std':<15} {'IGD+ Std':<15} {'GD Std':<15} {'GD+ Std':<15} {'HV Std':<15}")
-            f.write(header + "\n")
-            f.write(f"  {'-'*15:<15} "
-                    f"{'-'*15:<15} {'-'*15:<15} {'-'*15:<15} {'-'*15:<15} {'-'*15:<15} "
-                    f"{'-'*15:<15} {'-'*15:<15} {'-'*15:<15} {'-'*15:<15} {'-'*15:<15}\n")
-
             method_scores = {m: {} for m in PERFORMANCE_METRICS}
             all_results = {}
 
@@ -166,32 +160,38 @@ def process_hp_dir(hp_dir: Path, key_prefix: str, title_suffix: str, filename_su
 
                 all_results[method] = scores
 
-            rankings = {metric: {} for metric in PERFORMANCE_METRICS}
-            for metric in PERFORMANCE_METRICS:
-                reverse = metric == "HV"
-                sorted_methods = sorted(method_scores[metric].items(),
-                                        key=lambda x: x[1],
-                                        reverse=reverse)
-                for rank, (m, _) in enumerate(sorted_methods, 1):
-                    rankings[metric][m] = rank
+            f.write("\\midrule\n")
+            for i, metric in enumerate(PERFORMANCE_METRICS):
+                if i == 0:
+                    row = f"\\multirow{{{len(PERFORMANCE_METRICS)}}}{{4em}}{{{dataset_name}}} & {metric}"
+                else:
+                    row = f" & {metric}"
 
-            for method in BASELINE_NAMES:
-                scores = all_results[method]
-                f.write(
-                    f"  {method:<15} "
-                    f'''{scores['IGD_mean']:.6f} {f"({rankings['IGD'][method]})"} ''' + ' ' * 3 +
-                    f'''{scores['IGD+_mean']:.6f} {f"({rankings['IGD+'][method]})"} ''' + ' ' * 3 +
-                    f'''{scores['GD_mean']:.6f} {f"({rankings['GD'][method]})"} ''' + ' ' * 3 +
-                    f'''{scores['GD+_mean']:.6f} {f"({rankings['GD+'][method]})"} ''' + ' ' * 3 +
-                    f'''{scores['HV_mean']:.6f} {f"({rankings['HV'][method]})"} ''' + ' ' * 3 +
-                    f"{scores['IGD_std']:.6f} " + ' ' * 7 +
-                    f"{scores['IGD+_std']:.6f} " + ' ' * 7 +
-                    f"{scores['GD_std']:.6f} " + ' ' * 7 +
-                    f"{scores['GD+_std']:.6f} " + ' ' * 7 +
-                    f"{scores['HV_std']:.6f}\n"
-                )
+                # collect means/stds for all methods for this dataset+metric
+                means = {m: all_results[m][f"{metric}_mean"] for m in BASELINE_NAMES}
+                stds  = {m: all_results[m][f"{metric}_std"]  for m in BASELINE_NAMES}
+
+                # best mean + threshold rule
+                best_method = min(means, key=means.get) if metric != "HV" else max(means, key=means.get)
+                best_mean, best_std = means[best_method], stds[best_method]
+                threshold = best_mean - best_std if metric != "HV" else best_mean + best_std
+
+                for m in BASELINE_NAMES:
+                    mean, std = means[m], stds[m]
+                    cell = f"{mean:.3f} $\\pm$ {std:.3f}"
+                    if metric != "HV":  # lower is better
+                        if mean + std >= threshold:
+                            cell = f"\\textbf{{{cell}}}"
+                    else:  # higher is better
+                        if mean - std <= threshold:
+                            cell = f"\\textbf{{{cell}}}"
+                    row += " & " + cell
+
+                row += " && \\\\\n"
+                f.write(row)
+
                 
-            print(f"Report saved to {report_filepath}")
+        print(f"Report saved to {report_filepath}")
 
 
     # --- Step 4: Generate Scatter Plots ---
@@ -215,14 +215,24 @@ def process_hp_dir(hp_dir: Path, key_prefix: str, title_suffix: str, filename_su
                 has_data_for_plot = True
                 # Unzip list of tuples into x and y coordinates
                 x_coords, y_coords = zip(*all_points_for_method)
+                len_old = len(x_coords)
+                # filter out y > 10
+                try:
+                    y_coords, x_coords = zip(*[(y, x) for x, y in zip(x_coords, y_coords) if y <= 10])
+                except ValueError:
+                    print(f"  All points for {hp_dir}, method {method} have {y_metric_name} > 10. Skipping these points.")
+                    y_coords, x_coords = [], []
+                len_new = len(x_coords)
+                if len_new < len_old:
+                    print(f"  Note: Filtered out {len_old - len_new} points with {y_metric_name} > 10 for {hp_dir}, method {method}.")
                 
                 ax.scatter(
                         x_coords, y_coords,
                         label=TITLE_METHODS[method],
                         s=50,
-                        color=METHOD_COLORS.get(method, 'gray'),
-                        marker=METHOD_MARKERS.get(method, 'o'),
-                        alpha=0.5
+                        color=METHOD_COLORS[method],
+                        marker=METHOD_MARKERS[method],
+                        alpha=0.3
                     )
                 
                 all_x_coords.extend(x_coords)
@@ -233,20 +243,20 @@ def process_hp_dir(hp_dir: Path, key_prefix: str, title_suffix: str, filename_su
             ax.set_xlabel(f'ECE')
             ax.set_ylabel(f'{TITLE_METRICS[y_metric_name]}')
 
+            # set y_max as 95th percentile of all_y_coords + 0.02. 
             if all_x_coords and all_y_coords:
                 min_x, max_x = np.min(all_x_coords), np.max(all_x_coords)
-                min_y, max_y = np.min(all_y_coords), np.max(all_y_coords)
+                min_y, max_95_y = np.min(all_y_coords), np.percentile(all_y_coords, 95)
                 
                 x_buffer = (max_x - min_x) * 0.1 if (max_x - min_x) > 0 else 0.1
-                y_buffer = (max_y - min_y) * 0.1 if (max_y - min_y) > 0 else 0.1
                 
                 ax.set_xlim(min_x - x_buffer, max_x + x_buffer)
-                ax.set_ylim(min_y - y_buffer, max_y + y_buffer)
+                ax.set_ylim(max(0, min_y - 0.02), max_95_y + 0.02)
 
             ax.grid(True, linestyle='--', alpha=0.6)
             ax.legend(title="Method")
             plt.tight_layout()
-            plot_filename = hp_dir / f"seeds_scatter_ece_vs_{y_metric_name}{filename_suffix}.png"
+            plot_filename = hp_dir / f"plot_{dataset_name}_{hp_config_name}_{y_metric_name}{filename_suffix}.pdf"
             plt.savefig(plot_filename)
             print(f"Plot saved to {plot_filename}")
         else:

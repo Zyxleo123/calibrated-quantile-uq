@@ -55,7 +55,7 @@ def plot_pareto_fronts(pf_by_hp: Dict[str, List[Tuple[float, float]]], dataset_n
     plt.legend()
     plt.grid()
     plt.tight_layout()
-    plt.savefig(save_dir / f'pareto_fronts{filename_suffix}.png')
+    plt.savefig(save_dir / f'pareto_fronts{filename_suffix}.pdf')
     plt.close()
 
 

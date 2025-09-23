@@ -108,7 +108,7 @@ DEFAULT_VALUE = {
 
 TEST_HYPERPARAMS = {
     "skip_existing": [0],
-    "data": ["elevator", "fusion"],
+    "data": ["boston", "yacht"],
     "lr": [1e-3],
     "bs": [64],
     "batch_norm": [0],
@@ -120,26 +120,7 @@ TEST_HYPERPARAMS = {
     "hs": [32],
     "residual": [1],
     "seed": [0],
-    "loss": ["batch_int", "maqr", "calipso"],
-	"num_ep": [10],
-}
-
-PRERUN_HYPERPARAMS = {
-	"skip_existing": [0],
-    "loss": ["maqr"],
-    "data": [
-			 "elevator", "fusion"],
-    "lr": [1e-3],
-    "bs": [64],
-    "batch_norm": [0],
-    "layer_norm": [0],
-    "dropout": [0.0],
-    "num_ens": [1],
-    "nl": [1],
-    "hs": [32],
-    "boot": [0],
-    "residual": [1],
-    "seed": [0, 1, 2, 3, 4],
+    "loss": ["batch_int", "batch_qr", "batch_int"],
 	"num_ep": [5],
 }
 
@@ -161,9 +142,61 @@ FULL_HYPERPARAMS = {
     "loss": ["maqr", "batch_qr", "batch_int", "batch_cal"],
 }
 
-LOAD1_HYPERPARAMS = {
+
+PROTEIN_HYPERPARAMS = {
     "skip_existing": [1],
-    "data": ["diamonds", "facebook", "elevator", "fusion"],
+    "data": ["protein"],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "nl": [8, 2, 1, 4],
+    "hs": [256, 64, 32, 128],
+    "residual": [1],
+    "seed": [0, 1],
+    "loss": ["calipso", "maqr", "batch_qr", "batch_int", "batch_cal"],
+}
+
+ELEVATOR_HYPERPARAMS = {
+    "skip_existing": [1],
+    "data": ["elevator"],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "residual": [1],
+    "seed": [0, 1],
+    "loss": ["calipso", "maqr", "batch_qr", "batch_int", "batch_cal"],
+    "nl": [8, 2, 1, 4],
+    "hs": [256, 64, 32, 128],
+}
+
+FUSION_HYPERPARAMS = {
+    "skip_existing": [1],
+    "data": ["fusion"],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "residual": [1],
+    "seed": [0, 1],
+    "loss": ["calipso", "maqr", "batch_qr", "batch_int", "batch_cal"],
+    "nl": [8, 2, 1, 4],
+    "hs": [256, 64, 32, 128],
+}
+
+FACEBOOK_HYPERPARAMS = {
+    "skip_existing": [1],
+    "data": ["facebook"],
     "lr": [1e-3],
     "bs": [64],
     "batch_norm": [0],
@@ -175,12 +208,11 @@ LOAD1_HYPERPARAMS = {
     "hs": [256, 64, 32, 128],
     "residual": [1],
     "seed": [0, 1, 2],
-    "loss": ["maqr", "batch_qr", "batch_int", "batch_cal"],
+    "loss": ["calipso", "maqr", "batch_qr", "batch_int", "batch_cal"],
 }
 
-LOAD2_HYPERPARAMS = {
-	"skip_existing": [1],
-    "data": ["protein", "boston", "concrete", "energy", "kin8nm", "naval", "power", "wine", "yacht", "fusion"],
+FUSIONELEVATOR_HYPERPARAMS = {
+    "skip_existing": [1],
     "lr": [1e-3],
     "bs": [64],
     "batch_norm": [0],
@@ -188,65 +220,31 @@ LOAD2_HYPERPARAMS = {
     "dropout": [0.0],
     "num_ens": [1],
     "boot": [0],
+    "residual": [1],
+    "seed": [0, 1],
+    "loss": ["batch_qr", "batch_int", "batch_cal", "maqr", "calipso"],
+    "nl": [1, 2, 4, 8],
+    "hs": [32, 64, 128, 256],
+    "data": ["fusion", "elevator"],
+}
+
+SEED_HYPERPARAMS = {
+    "skip_existing": [1],
+    "data": ["facebook", "elevator", "boston", "concrete", "energy", "kin8nm", "naval", "power", "wine", "yacht",
+			 "diamonds", "fusion", "protein"],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "residual": [1],
+    "seed": [4, 5],
+    "loss": ["batch_qr", "batch_int", "batch_cal"],
     "nl": [8, 2, 1, 4],
     "hs": [256, 64, 32, 128],
-    "residual": [1],
-    "seed": [0, 1, 2],
-    "loss": ["maqr", "batch_qr", "batch_int", "batch_cal", "calipso"],
 }
-
-CALIPSO_HYPERPARAMS = {
-    "skip_existing": [1],
-    "data": ["boston", "concrete", "energy", "kin8nm", "naval", "power", "wine", "yacht",
-			 "protein", "diamonds", "facebook", "elevator", "fusion"],
-    "lr": [1e-3],
-    "bs": [64],
-    "batch_norm": [0],
-    "layer_norm": [0],
-    "dropout": [0.0],
-    "num_ens": [1],
-    "boot": [0],
-    "nl": [8, 2, 1, 4],
-    "hs": [256, 64, 32, 128],
-    "residual": [1],
-    "seed": [0, 1, 2],
-    "loss": ["calipso"],
-}
-
-CALIPSO2_HYPERPARAMS = {
-    "skip_existing": [1],
-	"data": ["diamonds", "facebook", "elevator", "fusion"],
-    "lr": [1e-3],
-    "bs": [64],
-    "batch_norm": [0],
-    "layer_norm": [0],
-    "dropout": [0.0],
-    "num_ens": [1],
-    "boot": [0],
-    "nl": [8, 2, 1, 4],
-    "hs": [256, 64, 32, 128],
-    "residual": [1],
-    "seed": [0, 1, 2],
-    "loss": ["calipso"],
-}
-
-CALIPSOREVERSE_HYPERPARAMS = {
-    "skip_existing": [1],
-    "seed": [0, 1, 2],
-    "lr": [1e-3],
-    "bs": [64],
-    "batch_norm": [0],
-    "layer_norm": [0],
-    "dropout": [0.0],
-    "num_ens": [1],
-    "boot": [0],
-	"data": ["fusion", "facebook", "elevator", "diamonds", "protein"],
-    "nl": [8],
-    "hs": [256],
-    "residual": [1],
-    "loss": ["calipso"],
-}
-
 
 NL_HS_COMBINATIONS = [
 	(1, 32),
@@ -258,12 +256,12 @@ NL_HS_COMBINATIONS = [
 HYPERPARAMS = {
 	"TEST": TEST_HYPERPARAMS,
 	"FULL": FULL_HYPERPARAMS,
-	"LOAD1": LOAD1_HYPERPARAMS,
-	"LOAD2": LOAD2_HYPERPARAMS,
-	"PRERUN": PRERUN_HYPERPARAMS,
-	"CALIPSO": CALIPSO_HYPERPARAMS,
-	"CALIPSO2": CALIPSO2_HYPERPARAMS,
-    "CALIPSOREVERSE": CALIPSOREVERSE_HYPERPARAMS,
+    "PROTEIN": PROTEIN_HYPERPARAMS,
+    "ELEVATOR": ELEVATOR_HYPERPARAMS,
+    "FUSION": FUSION_HYPERPARAMS,
+    "FACEBOOK": FACEBOOK_HYPERPARAMS,
+    "FUSIONELEVATOR": FUSIONELEVATOR_HYPERPARAMS,
+    "SEED": SEED_HYPERPARAMS,
 }
 
 def get_one_hot_param(inputs: dict, default_value_dict: dict) -> Optional[str]:
