@@ -364,6 +364,10 @@ if __name__ == "__main__":
                 )#.to(args.device)
             def forward(self, x):
                 return self.net(x)
+        # x_va2 = x_tr[int(x_tr.shape[0]*0.9):]
+        # y_va2 = y_tr[int(y_tr.shape[0]*0.9):]
+        # x_tr = x_tr[:int(x_tr.shape[0]*0.9)]
+        # y_tr = y_tr[:int(y_tr.shape[0]*0.9)]
         model_ens, loader = calipso_main(args.data, args.seed, x_tr, y_tr, x_va, y_va, args.device, VanillaModel)
     else:
         # y_va_centered = None

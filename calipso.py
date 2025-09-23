@@ -532,7 +532,16 @@ class quantile_model_ensemble(nn.Module):
             unique_p, inverse_idx = torch.unique(p, sorted=True, return_inverse=True)
             out = torch.empty((x.shape[0], 1), device=self.output_device, dtype=x.dtype)
 
-            preds = self.get_quantiles(x, unique_p)
+            batch_size = 256
+            n = x.shape[0]
+            preds = torch.empty((n, unique_p.shape[0]), device=self.output_device, dtype=x.dtype)
+
+            # Predict x in batches for all unique_p at once
+            for start in range(0, n, batch_size):
+                end = min(start + batch_size, n)
+                x_batch = x[start:end]
+                preds_batch = self.get_quantiles(x_batch, unique_p)
+                preds[start:end, :] = preds_batch
 
             for up_idx, up in enumerate(unique_p):
                 rows = (inverse_idx == up_idx)
@@ -570,8 +579,18 @@ class quantile_model_ensemble(nn.Module):
                 in_q_list = q_list
 
             # For calipso, ens_pred_type/recal_* are not used; get calibrated quantiles directly
-            pred_mat = self.get_quantiles(x, in_q_list)  # (num_x, num_q)
-        return pred_mat
+
+            batch_size = 256
+            n = x.shape[0]
+            preds = torch.empty((n, in_q_list.shape[0]), device=self.output_device, dtype=x.dtype)
+
+            # Predict x in batches for all unique_p at once
+            for start in range(0, n, batch_size):
+                end = min(start + batch_size, n)
+                x_batch = x[start:end]
+                preds_batch = self.get_quantiles(x_batch, in_q_list)
+                preds[start:end, :] = preds_batch
+        return preds
 ##########################################################
 
 def gen_model(X, Y, X_val, Y_val, output_device, vanilla_model, path=None):
