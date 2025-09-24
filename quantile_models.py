@@ -30,7 +30,7 @@ from shapely.geometry import Polygon, LineString
 from shapely.ops import polygonize, unary_union
 
 sys.path.append(os.path.dirname(os.path.realpath(__file__)))
-from utils.q_model_ens import QModelEns
+from utils.q_model_ens import NUM_PARTS, QModelEns
 
 
 DATA_TYPES = ['numpy', 'torch']
@@ -141,8 +141,8 @@ def crps_score(model, X, y, args): # all done
 
     # if not hasattr(args, 'num_p'):
     #     # print('args does not have num_p for crps_score, replacing with default')
-    args.num_p = 1000
-    resolution = 1000
+    args.num_p = 100
+    resolution = 100
 
     num_pts = y.size(0)
     p_list = torch.linspace(0.01, 0.99, args.num_p)
@@ -393,7 +393,7 @@ def interval_score(model, X, y, args): # all done
 
 #     return exp_props, obs_props, cdf_preds
 
-def get_obs_props(model, X, y, exp_props, device, type,
+def get_obs_props(model, X, y, exp_props, device, type, in_batch=True,
                   recal_model=None, recal_type='sklearn', calipso=False):
     """
     Outputs observed proportions by model per expected proportions
@@ -430,25 +430,15 @@ def get_obs_props(model, X, y, exp_props, device, type,
 
     with torch.no_grad():
         if calipso:
-            batch_size = 256
+            batch_size = len(X) // NUM_PARTS
             all_preds_list = []
-            for i in range(0, X.size(0), batch_size):
+            for i in tqdm.tqdm(range(0, X.size(0), batch_size)):
                 X_batch = X[i:i+batch_size]
                 batch_preds = model.predict_q(X_batch, exp_props_in)
                 all_preds_list.append(batch_preds)
             all_preds = torch.cat(all_preds_list, dim=0)
         else:
-            num_parts = 20
-            size_parts = len(cdf_in_batch) // num_parts
-            # inference in parts to save memory
-            for i in range(num_parts):
-                if i == 0:
-                    all_preds = model.predict(cdf_in_batch[i*size_parts:(i+1)*size_parts])
-                elif i == num_parts - 1:
-                    all_preds = torch.cat([all_preds, model.predict(cdf_in_batch[i*size_parts:])], dim=0)
-                else:
-                    all_preds = torch.cat([all_preds, model.predict(cdf_in_batch[i*size_parts:(i+1)*size_parts])], dim=0)
-        # all_preds = model.predict(cdf_in_batch)
+            all_preds = model.predict(cdf_in_batch, in_batch=in_batch)
 
     preds_reshaped = all_preds.view(num_pts, num_q)
     
@@ -472,6 +462,8 @@ def average_calibration(model, X, y, args): # all done
     :return:
     """
 
+    if not hasattr(args, 'in_batch'):
+        args.in_batch = True
     if not hasattr(args, 'exp_props'):
         args.exp_props = None
     if not hasattr(args, 'recal_model'):
@@ -484,7 +476,7 @@ def average_calibration(model, X, y, args): # all done
 
     exp_props, obs_props, cdf_preds = \
         get_obs_props(model, X, y, args.exp_props,
-                      device=args.device, type=cali_type,
+                      device=args.device, type=cali_type, in_batch=args.in_batch,
                       recal_model=args.recal_model, recal_type=args.recal_type, calipso=args.calipso if hasattr(args, 'calipso') else False)
 
     # # Compute miscalibration area
@@ -612,7 +604,16 @@ def bag_nll(model, X, y, args): # working
         x_stacked = X.repeat(num_q, 1)
         model_in = torch.cat([x_stacked, q_rep], dim=1)
 
-    pred_y = model.predict(model_in)
+    if args.loss == 'calipso':
+        batch_size = len(X) // NUM_PARTS
+        all_preds_list = []
+        for i in tqdm.tqdm(range(0, X.size(0), batch_size)):
+            X_batch = X[i:i+batch_size]
+            batch_preds = model.predict_q(X_batch, q_rep)
+            all_preds_list.append(batch_preds)
+        pred_y = torch.cat(all_preds_list, dim=0)
+    else:
+        pred_y = model.predict(model_in)
 
     pred_y_mat = pred_y.reshape(num_q, num_pts).T
     nll_list = []
@@ -628,7 +629,14 @@ def bag_nll(model, X, y, args): # working
             return sum_squared_diff
         bounds = [(init_mean - (2 * init_std), init_mean + (2 * init_std)),
                   (1e-10, 3 * init_std + 1e-10)]
-        result = minimize(obj, x0=[init_mean, init_std], bounds=bounds)
+        # result = minimize(obj, x0=[init_mean, init_std], bounds=bounds)
+        result = minimize(
+            obj,
+            x0=[init_mean, init_std],
+            bounds=bounds,
+            method="L-BFGS-B",
+            options={"ftol": 1e-6, "maxiter": 500}
+        )
         if not result['success']:
             print('pt {} bag not optimized well'.format(pt_idx))
         opt_mean, opt_std = result['x'][0], result['x'][1]

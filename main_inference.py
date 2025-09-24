@@ -1,3 +1,4 @@
+import pickle
 import os, sys
 import argparse
 from argparse import Namespace
@@ -69,6 +70,9 @@ def get_loss_fn(loss_name):
 
 def parse_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--models_path", type=str, default="", help="path to trained models"
+    )
     parser.add_argument(
         "--min_thres", type=float, default=0.001, help="Minimum ECE threshold"
     )
@@ -192,7 +196,7 @@ def parse_args():
         "--skip_existing", type=int, default=1, help="1 to skip existing results"
     )
     parser.add_argument("--debug", type=int, default=0, help="1 to debug")
-
+    
     # MAQR-specific arguments
     parser.add_argument("--dist_type", type=str, default="kernel", help="distance type for MAQR")
     parser.add_argument("--num_in_bin", type=int, default=40, help="number of points in bin for MAQR")
@@ -238,14 +242,11 @@ def parse_args():
 
 if __name__ == "__main__":
     # DATA_NAMES = ['wine', 'naval', 'kin8nm', 'energy', 'yacht', 'concrete', 'power', 'boston']
+    print("Running new version")
 
     args = parse_args()
 
-    # CHANGE 1: For calipso/maqr, adjust epochs to 1000 and calculate data partitions.
-    if args.loss in ['maqr', 'calipso']:
-        original_num_ep = args.num_ep
-        args.num_ep = 1000
-        num_parts = 1000 // original_num_ep
+    # print("DEVICE: {}".format(args.device))
 
     if not os.path.exists(args.save_dir):
         os.makedirs(args.save_dir)
@@ -266,9 +267,15 @@ if __name__ == "__main__":
     va_interval_list = []
     va_check_list = []
 
+    # print(
+    #     "Drawing group batches every {}, penalty {}".format(
+    #         args.draw_group_every, args.sharp_penalty
+    #     )
+    # )
+
     # Save file name
     if "penalty" not in args.loss:
-        save_file_name = get_save_file_name(args)
+        save_file_name = args.models_path.replace('_models.pkl', '.pkl')
 
     else:
         # penalizing sharpness
@@ -323,6 +330,9 @@ if __name__ == "__main__":
     )
     y_range = (y_al.max() - y_al.min()).item()
 
+
+    # print(f"Training size {len(x_tr)}")
+    print(f"Training size {len(x_tr)}, Validation size {len(x_va)}, Test size {len(x_te)}") 
     # Check if using MAQR approach
     if args.loss == 'maqr':
         # Use MAQR training procedure from uci_model_agn.py
@@ -341,283 +351,15 @@ if __name__ == "__main__":
         model_ens, loader, cdf_x_va_tensor, cdf_y_va_tensor, pred_mean_va, pred_mean_te = maqr_main(
             from_main_py=True, args=args
         )
-
+        
         # For MAQR, we need to center the targets for evaluation
         y_va_centered = y_va - torch.from_numpy(pred_mean_va).to(y_va.device)
         y_te_centered = y_te - torch.from_numpy(pred_mean_te).to(y_te.device)
-    elif args.loss == 'calipso':
-        class VanillaModel(nn.Module):
-            def __init__(self, nfeatures):
-                super().__init__()
-                self.net = EnhancedMLP(
-                    input_size=nfeatures,
-                    output_size=y_tr.shape[1],
-                    hidden_size=args.hs,
-                    num_layers=args.nl,
-                    residual=args.residual,
-                    batch_norm=args.batch_norm,
-                    layer_norm=args.layer_norm,
-                    dropout=args.dropout,
-                    activation=args.activation,
-                )#.to(args.device)
-            def forward(self, x):
-                return self.net(x)
-        model_ens, loader = calipso_main(args.data, args.seed, x_tr, y_tr, x_va, y_va, args.device, VanillaModel)
-    else:
-        # y_va_centered = None
-        # y_te_centered = None
-        num_tr = x_tr.shape[0]
-        dim_x = x_tr.shape[1]
-        dim_y = y_tr.shape[1]
-        model_ens = QModelEns(
-            input_size=dim_x + 1,
-            output_size=dim_y,
-            hidden_size=args.hs,
-            num_layers=args.nl,
-            lr=args.lr,
-            wd=args.wd,
-            num_ens=args.num_ens,
-            device=args.device,
-            residual=args.residual,
-            batch_norm=args.batch_norm,
-            layer_norm=args.layer_norm,
-            dropout=args.dropout,
-            activation=args.activation,
-        )
-
-        # Data loader
-        if not args.boot:
-            loader = DataLoader(
-                TensorDataset(x_tr, y_tr),
-                shuffle=True,
-                batch_size=args.bs,
-            )
-        else:
-            rand_idx_list = [
-                np.random.choice(num_tr, size=num_tr, replace=True)
-                for _ in range(args.num_ens)
-            ]
-            loader_list = [
-                DataLoader(
-                    TensorDataset(x_tr[idxs], y_tr[idxs]),
-                    shuffle=True,
-                    batch_size=args.bs,
-                )
-                for idxs in rand_idx_list
-            ]
-
-    # CHANGE 2: For calipso/maqr, split the training data into sequential parts.
-    x_tr_parts, y_tr_parts = None, None
-    if args.loss in ['maqr', 'calipso']:
-        # Extract the full training dataset from the loader created by the setup functions.
-        # This dataset might be transformed (e.g., for MAQR), so we extract it from the loader.
-        if args.loss == 'maqr':
-            full_tr_dataset_x, full_tr_dataset_y = loader.dataset.tensors
-        if args.loss == 'calipso':
-            full_tr_dataset_x, full_tr_dataset_y = loader.dataset.X, loader.dataset.Y
-
-        # Sequentially split the dataset into parts for per-epoch training.
-        x_tr_parts = torch.chunk(full_tr_dataset_x, num_parts, dim=0)
-        y_tr_parts = torch.chunk(full_tr_dataset_y, num_parts, dim=0)
 
     # Loss function
     loss_fn = get_loss_fn(args.loss)
     args.scale = True if "scale" in args.loss else False
     batch_loss = True if "batch" in args.loss else False
-
-    """ train loop """
-    tr_loss_list = []
-
-    va_loss_list = []
-    va_sharp_list = []
-    va_ece_list = []
-
-    te_loss_list = []
-    te_sharp_list = []
-    te_ece_list = []
-
-    frontier = EceSharpFrontier()
-
-    # setting batch groupings
-    group_list = discretize_domain(x_tr.numpy(), args.bs)
-    curr_group_idx = 0
-
-    # validation_device = torch.device("cpu")
-    validation_device = args.device
-    x_va_validation_device, y_va_validation_device = x_va.to(validation_device), y_va.to(validation_device)
-    x_te_validation_device, y_te_validation_device = x_te.to(validation_device), y_te.to(validation_device)
-
-    cdf_x_va_tensor_validation_device = cdf_x_va_tensor.to(validation_device) if args.loss == 'maqr' else None
-    cdf_y_va_tensor_validation_device = cdf_y_va_tensor.to(validation_device) if args.loss == 'maqr' else None
-
-    y_va_centered_validation_device = y_va_centered.to(validation_device) if args.loss == 'maqr' else None
-    y_te_centered_validation_device = y_te_centered.to(validation_device) if args.loss == 'maqr' else None
-    ece_q_list_validation_device = torch.linspace(0.01, 0.99, 99).to(validation_device)
-    sharpness_q_list_validation_device = torch.tensor([0.025, 0.975], device=validation_device)
-
-    for ep in tqdm.tqdm(range(args.num_ep)):
-        # Take train step
-        # list of losses from each batch, for one epoch
-        ep_train_loss = []
-        
-        # CHANGE 3: Modify training loop for calipso/maqr to use data parts.
-        if args.loss in ['maqr', 'calipso']:
-            # For each epoch, create a loader for one sequential part of the training data.
-            part_idx = ep % num_parts
-            current_x_part = x_tr_parts[part_idx]
-            current_y_part = y_tr_parts[part_idx]
-
-            train_loader_for_epoch = DataLoader(
-                TensorDataset(current_x_part, current_y_part),
-                shuffle=True,  # Shuffle within the part is standard for SGD
-                batch_size=args.bs
-            )
-
-            if args.loss == 'maqr':
-                for (xi, yi) in train_loader_for_epoch:
-                    xi, yi = xi.to(args.device), yi.to(args.device)
-                    loss = model_ens.loss(mse_loss_fn, xi, yi, q_list=None, batch_q=True, take_step=True, args=args)
-                    ep_train_loss.append(loss)
-            elif args.loss == 'calipso':
-                loss = model_ens.train_epoch(train_loader_for_epoch)
-                ep_train_loss.extend(torch.tensor(loss))
-        else:
-            # Original training logic for all other methods
-            if not args.boot:
-                if (ep + 1) % args.draw_group_every == 0:
-                    # drawing a group batch
-                    group_idxs = group_list[curr_group_idx]
-                    curr_group_idx = (curr_group_idx + 1) % dim_x
-                    for g_idx in group_idxs:
-                        xi = x_tr[g_idx.flatten()].to(args.device)
-                        yi = y_tr[g_idx.flatten()].to(args.device)
-                        q_list = torch.rand(args.num_q)
-                        loss = model_ens.loss(
-                            loss_fn,
-                            xi,
-                            yi,
-                            q_list,
-                            batch_q=batch_loss,
-                            take_step=True,
-                            args=args,
-                        )
-                        ep_train_loss.append(loss)
-                else:
-                    # just doing ordinary random batch
-                    for (xi, yi) in loader:
-                        xi, yi = xi.to(args.device), yi.to(args.device)
-                        q_list = torch.rand(args.num_q)
-                        loss = model_ens.loss(
-                            loss_fn,
-                            xi,
-                            yi,
-                            q_list,
-                            batch_q=batch_loss,
-                            take_step=True,
-                            args=args,
-                        )
-                        ep_train_loss.append(loss)
-            else:
-                # bootstrapped ensemble of models
-                for xi_yi_samp in zip(*loader_list):
-                    xi_list = [item[0].to(args.device) for item in xi_yi_samp]
-                    yi_list = [item[1].to(args.device) for item in xi_yi_samp]
-                    assert len(xi_list) == len(yi_list) == args.num_ens
-                    q_list = torch.rand(args.num_q)
-                    loss = model_ens.loss_boot(
-                        loss_fn,
-                        xi_list,
-                        yi_list,
-                        q_list,
-                        batch_q=batch_loss,
-                        take_step=True,
-                        args=args,
-                    )
-                    ep_train_loss.append(loss)
-
-        ep_tr_loss = torch.mean(torch.stack(ep_train_loss, dim=0), dim=0)
-        tr_loss_list.append(ep_tr_loss)
-
-
-        va_loss = model_ens.update_va_loss(
-            loss_fn,
-            x_va_validation_device if args.loss != 'maqr' else cdf_x_va_tensor_validation_device,
-            y_va_validation_device if args.loss != 'maqr' else cdf_y_va_tensor_validation_device,
-            ece_q_list_validation_device if args.loss != 'maqr' else None,
-            batch_q=batch_loss if args.loss != 'maqr' else True,
-            curr_ep=ep,
-            num_wait=args.wait,
-            args=args,
-        )
-        va_ece = average_calibration(
-            model_ens,
-            x_va_validation_device,
-            y_va_validation_device if args.loss != 'maqr' else y_va_centered_validation_device,
-            args=Namespace(
-                exp_props=ece_q_list_validation_device,
-                device=validation_device,
-                metric="cal_q",
-                calipso=args.loss == 'calipso',
-                in_batch=False
-            )
-        )
-        va_sharp_score, _ = test_uq(
-            model_ens,
-            x_va_validation_device,
-            y_va_validation_device if args.loss != 'maqr' else y_va_centered_validation_device,
-            sharpness_q_list_validation_device,
-            y_range,
-            recal_model=None,
-            recal_type=None,
-            output_sharp_score_only=True
-        )
-        if args.loss == 'batch_qr':
-            te_loss = model_ens.loss(
-                loss_fn,
-                x_te_validation_device,
-                y_te_validation_device if args.loss != 'maqr' else y_te_centered_validation_device,
-                ece_q_list_validation_device if args.loss != 'maqr' else None,
-                batch_q=batch_loss if args.loss != 'maqr' else True,
-                take_step=False,
-                args=args,
-            )
-        else:
-            te_loss = None
-        te_ece = average_calibration(
-            model_ens,
-            x_te_validation_device,
-            y_te_validation_device if args.loss != 'maqr' else y_te_centered_validation_device,
-            args=Namespace(
-                exp_props=ece_q_list_validation_device,
-                device=validation_device,
-                metric="cal_q",
-                calipso=args.loss == 'calipso'
-            )
-        )
-        te_sharp_score, _ = test_uq(
-            model_ens,
-            x_te_validation_device,
-            y_te_validation_device if args.loss != 'maqr' else y_te_centered_validation_device,
-            sharpness_q_list_validation_device,
-            y_range,
-            recal_model=None,
-            recal_type=None,
-            output_sharp_score_only=True
-        )
-
-        model_ens.use_device(args.device)
-
-        va_sharp_list.append(va_sharp_score)
-        va_ece_list.append(va_ece)
-        va_loss_list.append(va_loss)
-
-        te_sharp_list.append(te_sharp_score)
-        te_ece_list.append(te_ece)
-        te_loss_list.append(te_loss)
-
-        frontier.insert(va_ece, va_sharp_score, ep, deepcopy(model_ens), only_frontier=True)
-
-    # print(f"Train: {train_time:.2f}, Val: {validation_time:.2f}, Test: {test_time:.2f}")
 
     testing_device = torch.device('cuda:0')
     x_tr, y_tr, x_va, y_va, x_te, y_te = (
@@ -628,227 +370,205 @@ if __name__ == "__main__":
         x_te.to(testing_device),
         y_te.to(testing_device),
     )
-    if args.loss != 'calipso':
-        model_ens.model = [best_va_model if best_va_model is not None else model for best_va_model, model in zip(model_ens.best_va_model, model_ens.model)]
-    model_ens.use_device(testing_device)
-
     if args.loss == 'maqr':
         y_va = y_va_centered.to(testing_device)
         y_te = y_te_centered.to(testing_device)
 
-    # Test UQ on val
-    va_exp_props_recal = torch.linspace(-2.0, 3.0, 501, device=testing_device)
-    _, va_obs_props_recal = test_uq(
-        model_ens,
-        x_va,
-        y_va,
-        va_exp_props_recal,
-        y_range,
-        recal_model=None,
-        recal_type=None,
-        output_sharp_score_only=True
-    )
-
-    va_exp_props = torch.linspace(0.01, 0.99, 99, device=testing_device)
-    va_sharp_score, va_obs_props = test_uq(
-        model_ens,
-        x_va,
-        y_va,
-        va_exp_props,
-        y_range,
-        recal_model=None,
-        recal_type=None,
-        output_sharp_score_only=True
-    )
-    va_ece = average_calibration(
-        model_ens,
-        x_va,
-        y_va,
-        args=Namespace(
-            exp_props=va_exp_props,
-            device=testing_device,
-            metric="cal_q",
-            calipso=args.loss == 'calipso'
-        )
-    )
-
-    # Test UQ on test
-    te_exp_props = torch.linspace(0.01, 0.99, 99, device=testing_device)
-    te_sharp_score, te_obs_props = test_uq(
-        model_ens,
-        x_te,
-        y_te,
-        te_exp_props,
-        y_range,
-        recal_model=None,
-        recal_type=None,
-        output_sharp_score_only=True
-    )
-    va_ece = average_calibration(
-        model_ens,
-        x_te,
-        y_te,
-        args=Namespace(
-            exp_props=te_exp_props,
-            device=testing_device,
-            metric="cal_q",
-            calipso=args.loss == 'calipso'
-        )
-    )
-
-    args_for_score = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99), alpha_list=torch.linspace(0.01, 0.20, 20), loss=args.loss)
-    te_bag_nll = float(bag_nll(model_ens, x_te, y_te, args_for_score))
-    te_crps = float(crps_score(model_ens, x_te, y_te, args_for_score))
-    te_mpiw = float(torch.mean(mpiw(model_ens, x_te, y_te, args_for_score)))
-    te_interval = float(interval_score(model_ens, x_te, y_te, args_for_score))
-    te_check = float(check_loss(model_ens, x_te, y_te, args_for_score))
-    te_variance = float(mean_variance(model_ens, x_te, y_te, args_for_score))
-    # try:
-    #   te_bag_nll = float(bag_nll(model_ens, x_te, y_te, args_for_score))
-    # except:
-    #   te_bag_nll = np.nan
-    # try:
-    #   te_crps = float(crps_score(model_ens, x_te, y_te, args_for_score))
-    # except:
-    #   te_crps = np.nan
-    # try:
-    #   te_mpiw = float(torch.mean(mpiw(model_ens, x_te, y_te, args_for_score)))
-    # except:
-    #   te_mpiw = np.nan
-    # try:
-    #   te_interval = float(interval_score(model_ens, x_te, y_te, args_for_score))
-    # except:
-    #   te_interval = np.nan
-    # try:
-    #   te_check = float(check_loss(model_ens, x_te, y_te, args_for_score))
-    # except:
-    #   te_check = np.nan
-
-
-    if args.recal:
-        recal_model = iso_recal(va_exp_props_recal, va_obs_props_recal)
-        recal_exp_props = torch.linspace(0.01, 0.99, 99, device=testing_device)
-
-        recal_va_sharp_score, recal_va_obs_props = test_uq(
-            model_ens,
-            x_va,
-            y_va,
-            recal_exp_props,
-            y_range,
-            recal_model=recal_model,
-            recal_type="sklearn",
-            output_sharp_score_only=True
-        )
-        recal_va_ece = average_calibration(
-            model_ens,
-            x_va,
-            y_va,
-            args=Namespace(
-                exp_props=recal_exp_props,
-                device=testing_device,
-                metric="cal_q",
-                recal_model=recal_model,
-                recal_type="sklearn",
-                calipso=args.loss == 'calipso'
-            )
-        )
-
-        recal_te_sharp_score, recal_te_obs_props = test_uq(
-            model_ens,
-            x_te,
-            y_te,
-            recal_exp_props,
-            y_range,
-            recal_model=recal_model,
-            recal_type="sklearn",
-            output_sharp_score_only=True
-        )
-        recal_te_ece = average_calibration(
-            model_ens,
-            x_te,
-            y_te,
-            args=Namespace(
-                exp_props=recal_exp_props,
-                device=testing_device,
-                metric="cal_q",
-                recal_model=recal_model,
-                recal_type="sklearn",
-                calipso=args.loss == 'calipso'
-            )
-        )
-        args_for_score = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99), alpha_list=torch.linspace(0.01, 0.20, 20), recal_model=recal_model, recal_type="sklearn", loss=args.loss)
-        recal_te_bag_nll = float(bag_nll(model_ens, x_te, y_te, args_for_score))
-        recal_te_crps = float(crps_score(model_ens, x_te, y_te, args_for_score))
-        recal_te_mpiw = float(torch.mean(mpiw(model_ens, x_te, y_te, args_for_score)))
-        recal_te_interval = float(interval_score(model_ens, x_te, y_te, args_for_score))
-        recal_te_check = float(check_loss(model_ens, x_te, y_te, args_for_score))
-        recal_te_variance = float(mean_variance(model_ens, x_te, y_te, args_for_score))
 
     metrics_controlled = []
-    for entry in tqdm.tqdm(frontier.get_entries()):
-        controlled_model_ens = entry['model']
+    # --- PRE-LOADING PATCH: Define the missing classes ---
+    import __main__
+    class VanillaModel(nn.Module):
+        def __init__(self, nfeatures):
+            super().__init__()
+            self.net = None
+        def forward(self, x):
+            return self.net(x)
+    __main__.VanillaModel = VanillaModel
+    __main__.EnhancedMLP = EnhancedMLP
+    __main__.QModelEns = QModelEns
+
+    models_controlled = pickle.load(open(args.models_path, 'rb'))
+    # with open(tqdm_out_path, 'a', buffering=1) as tqdm_out:
+    import time
+    i = 0
+    for controlled_model_ens in tqdm.tqdm(models_controlled):
         current_metrics_tmp = {}
         current_metrics_tmp['model_controlled'] = controlled_model_ens
-        current_metrics_tmp['epoch_controlled'] = entry['epoch']
         controlled_model_ens.use_device(testing_device)
-
+        print(f"Evaluating controlled model {i+1}/{len(models_controlled)}")
         # Test UQ on val with controlled model
+        start_time = time.time()
+        print("start test_uq val for recal time")
         va_exp_props_controlled_recal = torch.linspace(-2.0, 3.0, 501, device=testing_device)
         _, va_obs_props_controlled_recal = test_uq(
             controlled_model_ens, x_va, y_va, va_exp_props_controlled_recal, y_range, recal_model=None, recal_type=None, output_sharp_score_only=True
         )
+        print(f"test_uq val for recal time: {time.time() - start_time:.2f} seconds")
 
+        start_time = time.time()
+        print("start test_uq val time")
         va_exp_props_controlled_tmp = torch.linspace(0.01, 0.99, 99, device=testing_device)
         current_metrics_tmp['va_sharp_score_controlled'], current_metrics_tmp['va_obs_props_controlled'] = test_uq(
             controlled_model_ens, x_va, y_va, va_exp_props_controlled_tmp, y_range, recal_model=None, recal_type=None, output_sharp_score_only=True
         )
+        print(f"test_uq val time: {time.time() - start_time:.2f} seconds")
+        start_time = time.time()
+        print("start average_calibration val time")
         current_metrics_tmp['va_ece_controlled'] = average_calibration(
             controlled_model_ens, x_va, y_va, args=Namespace(exp_props=va_exp_props_controlled_tmp, device=testing_device, metric="cal_q", calipso=args.loss == 'calipso')
         )
+        print(f"average_calibration val time: {time.time() - start_time:.2f} seconds")
 
         # Test UQ on test with controlled model
+        start_time = time.time()
+        print("start test_uq test time")
         te_exp_props_controlled_tmp = torch.linspace(0.01, 0.99, 99, device=testing_device)
         current_metrics_tmp['te_sharp_score_controlled'], current_metrics_tmp['te_obs_props_controlled'] = test_uq(
             controlled_model_ens, x_te, y_te, te_exp_props_controlled_tmp, y_range, recal_model=None, recal_type=None, output_sharp_score_only=True
         )
+        print(f"test_uq test time: {time.time() - start_time:.2f} seconds")
+
+        start_time = time.time()
+        print("start average_calibration test time")
         current_metrics_tmp['te_ece_controlled'] = average_calibration(
             controlled_model_ens, x_te, y_te, args=Namespace(exp_props=te_exp_props_controlled_tmp, device=testing_device, metric="cal_q", calipso=args.loss == 'calipso')
         )
+        print(f"average_calibration test time: {time.time() - start_time:.2f} seconds")
+
         # Other scoring rules on test
         args_for_score = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99), alpha_list=torch.linspace(0.01, 0.20, 20), loss=args.loss)
-        current_metrics_tmp['te_bag_nll_controlled'] = float(bag_nll(controlled_model_ens, x_te, y_te, args_for_score))
-        current_metrics_tmp['te_crps_controlled'] = float(crps_score(controlled_model_ens, x_te, y_te, args_for_score))
-        current_metrics_tmp['te_mpiw_controlled'] = float(torch.mean(mpiw(controlled_model_ens, x_te, y_te, args_for_score)))
-        current_metrics_tmp['te_interval_controlled'] = float(interval_score(controlled_model_ens, x_te, y_te, args_for_score))
-        current_metrics_tmp['te_check_controlled'] = float(check_loss(controlled_model_ens, x_te, y_te, args_for_score))
-        current_metrics_tmp['te_variance_controlled'] = float(mean_variance(controlled_model_ens, x_te, y_te, args_for_score))
+        start_time = time.time()
+        print("start bag_nll test time")
+        try:
+            current_metrics_tmp['te_bag_nll_controlled'] = float(bag_nll(controlled_model_ens, x_te, y_te, args_for_score))
+        except Exception as e:
+            current_metrics_tmp['te_bag_nll_controlled'] = float('nan')
+            raise e
+        print(f"bag_nll test time: {time.time() - start_time:.2f} seconds")
+        start_time = time.time()
+        print("start crps_score test time")
+        try:
+            current_metrics_tmp['te_crps_controlled'] = float(crps_score(controlled_model_ens, x_te, y_te, args_for_score))
+        except Exception as e:
+            current_metrics_tmp['te_crps_controlled'] = float('nan')
+            raise e
+        print(f"crps_score test time: {time.time() - start_time:.2f} seconds")
+        start_time = time.time()
+        print("start mpiw test time")
+        try:
+            current_metrics_tmp['te_mpiw_controlled'] = float(torch.mean(mpiw(controlled_model_ens, x_te, y_te, args_for_score)))
+        except Exception as e:
+            current_metrics_tmp['te_mpiw_controlled'] = float('nan')
+            raise e
+        print(f"mpiw test time: {time.time() - start_time:.2f} seconds")
+        start_time = time.time()
+        print("start interval_score test time")
+        try:
+            current_metrics_tmp['te_interval_controlled'] = float(interval_score(controlled_model_ens, x_te, y_te, args_for_score))
+        except Exception as e:
+            current_metrics_tmp['te_interval_controlled'] = float('nan')
+            raise e
+        print(f"interval_score test time: {time.time() - start_time:.2f} seconds")
+        start_time = time.time()
+        print("start check_loss test time")
+        try:
+            current_metrics_tmp['te_check_controlled'] = float(check_loss(controlled_model_ens, x_te, y_te, args_for_score))
+        except Exception as e:
+            current_metrics_tmp['te_check_controlled'] = float('nan')
+            raise e
+        print(f"check_loss test time: {time.time() - start_time:.2f} seconds")
+        start_time = time.time()
+        print("start mean_variance test time")
+        try:
+            current_metrics_tmp['te_variance_controlled'] = float(mean_variance(controlled_model_ens, x_te, y_te, args_for_score))
+        except Exception as e:
+            current_metrics_tmp['te_variance_controlled'] = float('nan')
+            raise e
+        print(f"mean_variance test time: {time.time() - start_time:.2f} seconds")
         # Recalibration for controlled model
         if args.recal:
             recal_model_controlled_tmp = iso_recal(va_exp_props_controlled_recal, va_obs_props_controlled_recal)
             recal_exp_props_controlled_tmp = torch.linspace(0.01, 0.99, 99, device=testing_device)
             # Recal on Validation
+            start_time = time.time()
+            print("start recal test_uq")
             current_metrics_tmp['recal_va_sharp_score_controlled'], current_metrics_tmp['recal_va_obs_props_controlled'] = test_uq(
                 controlled_model_ens, x_va, y_va, recal_exp_props_controlled_tmp, y_range, recal_model=recal_model_controlled_tmp, recal_type="sklearn", output_sharp_score_only=True
             )
+            print(f"recal val time: {time.time() - start_time:.2f} seconds")
+            start_time = time.time()
+            print("start recal val ece")
             current_metrics_tmp['recal_va_ece_controlled'] = average_calibration(
                 controlled_model_ens, x_va, y_va, args=Namespace(exp_props=recal_exp_props_controlled_tmp, device=testing_device, metric="cal_q", recal_model=recal_model_controlled_tmp, recal_type="sklearn", calipso=args.loss == 'calipso')
             )
+            print(f"recal val ece time: {time.time() - start_time:.2f} seconds")
             # Recal on Testing
+            start_time = time.time()
+            print("start recal test")
             current_metrics_tmp['recal_te_sharp_score_controlled'], current_metrics_tmp['recal_te_obs_props_controlled'] = test_uq(
                 controlled_model_ens, x_te, y_te, recal_exp_props_controlled_tmp, y_range, recal_model=recal_model_controlled_tmp, recal_type="sklearn", output_sharp_score_only=True
             )
+            print(f"recal test time: {time.time() - start_time:.2f} seconds")
+            start_time = time.time()
+            print("start recal test ece")
             current_metrics_tmp['recal_te_ece_controlled'] = average_calibration(
                 controlled_model_ens, x_te, y_te, args=Namespace(exp_props=recal_exp_props_controlled_tmp, device=testing_device, metric="cal_q", recal_model=recal_model_controlled_tmp, recal_type="sklearn", calipso=args.loss == 'calipso')
             )
+            print(f"recal test ece time: {time.time() - start_time:.2f} seconds")
             # Other scoring rules
             args_for_score = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99), alpha_list=torch.linspace(0.01, 0.20, 20), recal_model=recal_model_controlled_tmp, recal_type="sklearn", loss=args.loss)
-            current_metrics_tmp['recal_te_bag_nll_controlled'] = float(bag_nll(controlled_model_ens, x_te, y_te, args_for_score))
-            current_metrics_tmp['recal_te_crps_controlled'] = float(crps_score(controlled_model_ens, x_te, y_te, args_for_score))
-            current_metrics_tmp['recal_te_mpiw_controlled'] = float(torch.mean(mpiw(controlled_model_ens, x_te, y_te, args_for_score)))
-            current_metrics_tmp['recal_te_interval_controlled'] = float(interval_score(controlled_model_ens, x_te, y_te, args_for_score))
-            current_metrics_tmp['recal_te_check_controlled'] = float(check_loss(controlled_model_ens, x_te, y_te, args_for_score))
-            current_metrics_tmp['recal_te_variance_controlled'] = float(mean_variance(controlled_model_ens, x_te, y_te, args_for_score))
+            
+            start_time = time.time()
+            print("start recal bag_nll")
+            try:
+                current_metrics_tmp['recal_te_bag_nll_controlled'] = float(bag_nll(controlled_model_ens, x_te, y_te, args_for_score))
+            except Exception as e:
+                current_metrics_tmp['recal_te_bag_nll_controlled'] = float('nan')
+                raise e
+            print(f"recal bag_nll time: {time.time() - start_time:.2f} seconds")
+            start_time = time.time()
+            print("start recal crps_score")
+            try:
+                current_metrics_tmp['recal_te_crps_controlled'] = float(crps_score(controlled_model_ens, x_te, y_te, args_for_score))
+            except Exception as e:
+                current_metrics_tmp['recal_te_crps_controlled'] = float('nan')
+                raise e
+            print(f"recal crps_score time: {time.time() - start_time:.2f} seconds")
+            start_time = time.time()
+            print("start recal mpiw")
+            try:
+                current_metrics_tmp['recal_te_mpiw_controlled'] = float(torch.mean(mpiw(controlled_model_ens, x_te, y_te, args_for_score)))
+            except Exception as e:
+                current_metrics_tmp['recal_te_mpiw_controlled'] = float('nan')
+                raise e
+            print(f"recal mpiw time: {time.time() - start_time:.2f} seconds")
+            start_time = time.time()
+            print("start recal interval_score")
+            try:
+                current_metrics_tmp['recal_te_interval_controlled'] = float(interval_score(controlled_model_ens, x_te, y_te, args_for_score))
+            except Exception as e:
+                current_metrics_tmp['recal_te_interval_controlled'] = float('nan')
+                raise e
+            print(f"recal interval_score time: {time.time() - start_time:.2f} seconds")
+            start_time = time.time()
+            print("start recal check_loss")
+            try:
+                current_metrics_tmp['recal_te_check_controlled'] = float(check_loss(controlled_model_ens, x_te, y_te, args_for_score))
+            except Exception as e:
+                current_metrics_tmp['recal_te_check_controlled'] = float('nan')
+                raise e
+            print(f"recal check_loss time: {time.time() - start_time:.2f} seconds")
+            start_time = time.time()
+            print("start recal mean_variance")
+            try:
+                current_metrics_tmp['recal_te_variance_controlled'] = float(mean_variance(controlled_model_ens, x_te, y_te, args_for_score))
+            except Exception as e:
+                current_metrics_tmp['recal_te_variance_controlled'] = float('nan')
+                raise e
+            print(f"recal mean_variance time: {time.time() - start_time:.2f} seconds")
         metrics_controlled.append(current_metrics_tmp)
+        i += 1
     # Compute marginal sharpness of the target variable
     # va_marginal_sharpness = compute_marginal_sharpness(y_va, y_range)
     # te_marginal_sharpness = compute_marginal_sharpness(y_te, y_range)
@@ -856,13 +576,11 @@ if __name__ == "__main__":
     # Unpack metrics from the list of dictionaries into lists of metrics
     def dictlist_to_listdict(metrics_list, key):
         return [m[key] if m and key in m else None for m in metrics_list]
-
+    
     save_dic = {}
 
     # Define keys for unpacking
     controlled_metric_keys = [
-        'epoch_controlled',
-
         'va_sharp_score_controlled', 'te_sharp_score_controlled', 'va_ece_controlled', 'te_ece_controlled',
         'va_variance_controlled', 'va_cali_score_controlled', 'va_obs_props_controlled', 'va_q_preds_controlled', 'va_g_cali_scores_controlled', 'va_scoring_rules_controlled', 'va_bag_nll_controlled', 'va_crps_controlled', 'va_mpiw_controlled', 'va_interval_controlled', 'va_check_controlled',
         'te_variance_controlled', 'te_cali_score_controlled', 'te_obs_props_controlled', 'te_q_preds_controlled', 'te_g_cali_scores_controlled', 'te_scoring_rules_controlled', 'te_bag_nll_controlled', 'te_crps_controlled', 'te_mpiw_controlled', 'te_interval_controlled', 'te_check_controlled',
@@ -878,7 +596,7 @@ if __name__ == "__main__":
             save_dic[list_name] = [None for _ in range(len(metrics_controlled))]
         else:
             save_dic[list_name] = dictlist_to_listdict(metrics_controlled, list_name)
-
+    
     save_dic['va_exp_props_controlled'] = [torch.linspace(-2.0, 3.0, 501) for _ in range(len(metrics_controlled))]
     save_dic['te_exp_props_controlled'] = [torch.linspace(0.01, 0.99, 99) for _ in range(len(metrics_controlled))]
     if args.recal:
@@ -892,7 +610,7 @@ if __name__ == "__main__":
 
         "va_sharp_score", "te_sharp_score", "va_ece", "te_ece",
 
-        "va_cali_score", "va_exp_props", "va_obs_props", "va_q_preds", "va_bag_nll", "va_crps", "va_mpiw", "va_interval", "va_check", "va_variance", "va_g_cali_scores", "va_scoring_rules",
+        "va_cali_score", "va_exp_props", "va_obs_props", "va_q_preds", "va_bag_nll", "va_crps", "va_mpiw", "va_interval", "va_check", "va_variance", "va_g_cali_scores", "va_scoring_rules", 
         "te_cali_score", "te_exp_props", "te_obs_props", "te_q_preds", "te_bag_nll", "te_crps", "te_mpiw", "te_interval", "te_check", "te_variance", "te_g_cali_scores", "te_scoring_rules",
 
         "recal_exp_props",
@@ -901,7 +619,7 @@ if __name__ == "__main__":
         "recal_va_cali_score", "recal_va_obs_props", "recal_va_q_preds", "recal_va_g_cali_scores", "recal_va_scoring_rules", "recal_va_bag_nll", "recal_va_crps", "recal_va_mpiw", "recal_va_interval", "recal_va_check", "recal_va_variance",
         "recal_te_cali_score", "recal_te_obs_props", "recal_te_q_preds", "recal_te_g_cali_scores", "recal_te_scoring_rules", "recal_te_bag_nll", "recal_te_crps", "recal_te_mpiw", "recal_te_interval", "recal_te_check", "recal_te_variance",
     ]
-
+    
     current_locals = locals()
     for name in save_var_names:
         if name in current_locals:
@@ -913,3 +631,4 @@ if __name__ == "__main__":
     with open(save_file_name, "wb") as pf:
         pkl.dump(save_dic, pf)
     print(f"Results saved to {save_file_name}")
+    # tqdm_out.close()

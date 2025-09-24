@@ -16,6 +16,7 @@ import pickle
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
+from utils.q_model_ens import NUM_PARTS
 
 class Interp1d(torch.autograd.Function):
     @staticmethod
@@ -518,7 +519,7 @@ class quantile_model_ensemble(nn.Module):
             self.upper_quantile_models[i] = self.upper_quantile_models[i].to(device)
         return self
 
-    def predict(self,cdf_in,conf_level=0.95,score_distr="z",recal_model=None,recal_type=None):
+    def predict(self,cdf_in,conf_level=0.95,score_distr="z",recal_model=None,recal_type=None, in_batch=True):
         # cdf_in: tensor [x, p] of shape (num_x, dim_x + 1)
         with torch.no_grad():
             if not torch.is_tensor(cdf_in):
@@ -532,16 +533,19 @@ class quantile_model_ensemble(nn.Module):
             unique_p, inverse_idx = torch.unique(p, sorted=True, return_inverse=True)
             out = torch.empty((x.shape[0], 1), device=self.output_device, dtype=x.dtype)
 
-            batch_size = 256
+            batch_size = len(x) // NUM_PARTS
             n = x.shape[0]
-            preds = torch.empty((n, unique_p.shape[0]), device=self.output_device, dtype=x.dtype)
+            if in_batch:
+                preds = torch.empty((n, unique_p.shape[0]), device=self.output_device, dtype=x.dtype)
 
-            # Predict x in batches for all unique_p at once
-            for start in range(0, n, batch_size):
-                end = min(start + batch_size, n)
-                x_batch = x[start:end]
-                preds_batch = self.get_quantiles(x_batch, unique_p)
-                preds[start:end, :] = preds_batch
+                # Predict x in batches for all unique_p at once
+                for start in tqdm(range(0, n, batch_size)):
+                    end = min(start + batch_size, n)
+                    x_batch = x[start:end]
+                    preds_batch = self.get_quantiles(x_batch, unique_p)
+                    preds[start:end, :] = preds_batch
+            else:
+                preds = self.get_quantiles(x, unique_p)
 
             for up_idx, up in enumerate(unique_p):
                 rows = (inverse_idx == up_idx)

@@ -27,12 +27,12 @@ TITLE_METRICS = {
     'te_va_ece_exceedance': 'ECE Exceedance'
 }
 TITLE_METHODS = {
-    'batch_qr': 'QR',
+    'batch_qr': 'CGQR',
     'batch_cal': 'Cali',
     'batch_int': 'Interval',
     'maqr': 'MAQR',
     'calipso': 'Calipso',
-    'dheur': 'Dheur'
+    'dheur': 'QRT'
 }
 PERFORMANCE_METRICS = ['IGD', 'IGD+', 'GD', 'GD+', 'HV']
 COLORS = ["blue", "red", "green", "brown", "purple", "gray"]

@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+NUM_PARTS = 100
 # sys.path.append('../utils/NNKit')
 # sys.path.append('utils')
 from scipy.stats import norm as norm_distr
@@ -330,35 +331,33 @@ class QModelEns(uq_model):
     def update_va_loss(
         self, loss_fn, x, y, q_list, batch_q, curr_ep, num_wait, args
     ):
-        if any(self.waiting):
-            # compute in parts to save memory
-            with torch.no_grad():
-                num_parts = 20
-                size_parts = len(x) // num_parts
-                loss_parts = []
-                for i in range(num_parts):
-                    if i != num_parts - 1:
-                        loss_part = self.loss(
-                            loss_fn,
-                            x[i * size_parts : (i + 1) * size_parts],
-                            y[i * size_parts : (i + 1) * size_parts],
-                            q_list,
-                            batch_q,
-                            take_step=False,
-                            args=args,
-                        )
-                    else:
-                        loss_part = self.loss(
-                            loss_fn,
-                            x[i * size_parts :],
-                            y[i * size_parts :],
-                            q_list,
-                            batch_q,
-                            take_step=False,
-                            args=args,
-                        )
-                    loss_parts.append(loss_part)
-                va_loss = torch.mean(torch.stack(loss_parts), dim=0).cpu().numpy()
+        with torch.no_grad():
+            num_parts = 20
+            size_parts = len(x) // num_parts
+            loss_parts = []
+            for i in range(num_parts):
+                if i != num_parts - 1:
+                    loss_part = self.loss(
+                        loss_fn,
+                        x[i * size_parts : (i + 1) * size_parts],
+                        y[i * size_parts : (i + 1) * size_parts],
+                        q_list,
+                        batch_q,
+                        take_step=False,
+                        args=args,
+                    )
+                else:
+                    loss_part = self.loss(
+                        loss_fn,
+                        x[i * size_parts :],
+                        y[i * size_parts :],
+                        q_list,
+                        batch_q,
+                        take_step=False,
+                        args=args,
+                    )
+                loss_parts.append(loss_part)
+            va_loss = torch.mean(torch.stack(loss_parts), dim=0).cpu().numpy()
 
         for idx in range(self.num_ens):
             if self.waiting[idx]:
@@ -370,12 +369,14 @@ class QModelEns(uq_model):
                     if curr_ep - self.best_va_ep[idx] > num_wait:
                         self.waiting[idx] = False
                         print(f"Early stopping at ep {curr_ep}")
+        return va_loss
 
 
     #####
     def predict(
         self,
         cdf_in,
+        in_batch=True,
         conf_level=0.95,
         score_distr="z",
         recal_model=None,
@@ -396,7 +397,22 @@ class QModelEns(uq_model):
 
         if self.num_ens == 1:
             with torch.no_grad():
-                pred = self.model[0](cdf_in)
+                if in_batch:
+                    num_parts = NUM_PARTS
+                    size_parts = len(cdf_in) // num_parts
+                    # inference in parts to save memory
+                    for i in range(num_parts):
+                        if i == 0:
+                            all_preds = self.model[0](cdf_in[i*size_parts:(i+1)*size_parts])
+                        elif i == num_parts - 1:
+                            part_preds = self.model[0](cdf_in[i*size_parts:])
+                            all_preds = torch.cat([all_preds, part_preds], dim=0)
+                        else:
+                            part_preds = self.model[0](cdf_in[i*size_parts:(i+1)*size_parts])
+                            all_preds = torch.cat([all_preds, part_preds], dim=0)
+                else:
+                    all_preds = self.model[0](cdf_in)
+            pred = all_preds
         if self.num_ens > 1:
             pred_list = []
             for m in self.model:
@@ -416,64 +432,6 @@ class QModelEns(uq_model):
 
     #####
 
-    def predict_q(
-        self,
-        x,
-        q_list=None,
-        ens_pred_type="conf",
-        recal_model=None,
-        recal_type=None,
-    ):
-        """
-        Get output for given list of quantiles
-
-        :param x: tensor, of size (num_x, dim_x)
-        :param q_list: flat tensor of quantiles, if None, is set to [0.01, ..., 0.99]
-        :param ens_pred_type:
-        :param recal_model:
-        :param recal_type:
-        :return:
-        """
-
-        if q_list is None:
-            q_list = torch.arange(0.01, 0.99, 0.01)
-        else:
-            q_list = q_list.flatten()
-
-        if self.num_ens > 1:
-            # choose function to make ens predictions
-            if ens_pred_type == "conf":
-                ens_pred_fn = get_ens_pred_conf_bound
-            elif ens_pred_type == "interp":
-                ens_pred_fn = get_ens_pred_interp
-            else:
-                raise ValueError("ens_pred_type must be one of conf or interp")
-
-        num_x = x.shape[0]
-        num_q = q_list.shape[0]
-
-        cdf_preds = []
-        for p in q_list:
-            if recal_model is not None:
-                if recal_type == "torch":
-                    recal_model.cpu()  # keep recal model on cpu
-                    with torch.no_grad():
-                        in_p = recal_model(p.reshape(1, -1)).item()
-                elif recal_type == "sklearn":
-                    in_p = float(recal_model.predict(p.flatten()))
-                else:
-                    raise ValueError("recal_type incorrect")
-            else:
-                in_p = float(p)
-            p_tensor = (in_p * torch.ones(num_x)).reshape(-1, 1).to(self.device)
-            cdf_in = torch.cat([x, p_tensor], dim=1).to(self.device)
-            cdf_pred = self.predict(cdf_in)  # shape (num_x, 1)
-            cdf_preds.append(cdf_pred)
-
-        pred_mat = torch.cat(cdf_preds, dim=1)  # shape (num_x, num_q)
-        assert pred_mat.shape == (num_x, num_q)
-        return pred_mat
-    
     def predict_q(
         self,
         x,
@@ -521,19 +479,18 @@ class QModelEns(uq_model):
         cdf_in_batch = torch.cat([x_expanded, p_expanded], dim=1)
 
         with torch.no_grad():
-            num_parts = 20
+            num_parts = NUM_PARTS
             size_parts = len(cdf_in_batch) // num_parts
             # inference in parts to save memory
             for i in range(num_parts):
                 if i == 0:
-                    all_preds = self.predict(cdf_in_batch[i*size_parts:(i+1)*size_parts])
+                    all_preds = self.predict(cdf_in_batch[i*size_parts:(i+1)*size_parts], in_batch=False)
                 elif i == num_parts - 1:
                     part_preds = self.predict(cdf_in_batch[i*size_parts:])
                     all_preds = torch.cat([all_preds, part_preds], dim=0)
                 else:
-                    part_preds = self.predict(cdf_in_batch[i*size_parts:(i+1)*size_parts])
+                    part_preds = self.predict(cdf_in_batch[i*size_parts:(i+1)*size_parts], in_batch=False)
                     all_preds = torch.cat([all_preds, part_preds], dim=0)
-            all_preds = self.predict(cdf_in_batch)
         pred_mat = all_preds.view(num_x, num_q)
 
         assert pred_mat.shape == (num_x, num_q)

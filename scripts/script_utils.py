@@ -423,6 +423,23 @@ SEED_HYPERPARAMS = {
     "hs": [256, 64, 32, 128],
 }
 
+FUSIONFACEBOOK1_HYPERPARAMS = {
+    "skip_existing": [1],
+    "data": ["fusion", "facebook"],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "nl": [8],
+    "hs": [256],
+    "residual": [1],
+    "seed": [0, 1],
+    "loss": ["calipso"]
+}
+
 NL_HS_COMBINATIONS = [
 	(1, 32),
 	(2, 64),
@@ -446,6 +463,7 @@ HYPERPARAMS = {
     "FUSION21": FUSION21_HYPERPARAMS,
     "FUSION22": FUSION22_HYPERPARAMS,
     "FUSIONELEVATOR": FUSIONELEVATOR_HYPERPARAMS,
+    "FUSIONFACEBOOK1": FUSIONFACEBOOK1_HYPERPARAMS,
     "SEED": SEED_HYPERPARAMS,
 }
 

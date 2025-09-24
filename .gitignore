@@ -7,3 +7,5 @@ results
 *.txt
 data/new_datasets_raw
 *.pt
+graphs/
+*.pdf

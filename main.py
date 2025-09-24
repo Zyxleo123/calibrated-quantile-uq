@@ -235,12 +235,26 @@ def parse_args():
 
     return args
 
-
 if __name__ == "__main__":
     # DATA_NAMES = ['wine', 'naval', 'kin8nm', 'energy', 'yacht', 'concrete', 'power', 'boston']
     print("Running new version")
 
     args = parse_args()
+    class VanillaModel(nn.Module):
+        def __init__(self, nfeatures):
+            super().__init__()
+            self.net = EnhancedMLP(
+                input_size=nfeatures,
+                output_size=y_tr.shape[1],
+                hidden_size=args.hs,
+                num_layers=args.nl,
+                residual=args.residual,
+                batch_norm=args.batch_norm,
+                layer_norm=args.layer_norm,
+                dropout=args.dropout,
+                activation=args.activation,
+            )#.to(args.device)
+        args = parse_args()
 
     # print("DEVICE: {}".format(args.device))
 
@@ -916,3 +930,6 @@ if __name__ == "__main__":
         pkl.dump(save_dic, pf)
     print(f"Results saved to {save_file_name}")
     tqdm_out.close()
+
+import __main__
+__main__.VanillaModel = VanillaModel
