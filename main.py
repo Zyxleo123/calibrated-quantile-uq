@@ -19,7 +19,7 @@ from utils.misc_utils import (
     compute_marginal_sharpness
 )
 from recal import iso_recal
-from utils.q_model_ens import QModelEns, EnhancedMLP
+from utils.q_model_ens import QModelEns, EnhancedMLP, QRTNormalAdapterVanilla
 from losses import (
     cali_loss,
     batch_cali_loss,
@@ -60,6 +60,10 @@ def get_loss_fn(loss_name):
     elif loss_name == "maqr":
         fn = mse_loss_fn
     elif loss_name == "calipso":
+        fn = None
+    elif loss_name == "batch_QRT":
+        fn = None
+    elif loss_name == "batch_QRTC":
         fn = None
     else:
         raise ValueError("loss arg not valid")
@@ -340,8 +344,19 @@ if __name__ == "__main__":
     )
     y_range = (y_al.max() - y_al.min()).item()
 
-    # print(f"Training size {len(x_tr)}")
-    print(f"Training size {len(x_tr)}, Validation size {len(x_va)}, Test size {len(x_te)}") 
+    x_cal, y_cal = None, None
+    if args.loss == 'batch_QRTC':
+        x_trva = torch.cat([x_tr, x_va], dim=0)
+        y_trva = torch.cat([y_tr, y_va], dim=0)
+
+        n = x_trva.size(0)
+        n_train = int(65/90 * n)
+        n_val = int(10/90 * n)
+
+        x_tr, y_tr = x_trva[:n_train], y_trva[:n_train]
+        x_va, y_va = x_trva[n_train:n_train+n_val], y_trva[n_train:n_train+n_val]
+        x_cal, y_cal = x_trva[n_train+n_val:], y_trva[n_train+n_val:]
+
     # Check if using MAQR approach
     if args.loss == 'maqr':
         # Use MAQR training procedure from uci_model_agn.py
@@ -392,21 +407,43 @@ if __name__ == "__main__":
         num_tr = x_tr.shape[0]
         dim_x = x_tr.shape[1]
         dim_y = y_tr.shape[1]
-        model_ens = QModelEns(
-            input_size=dim_x + 1,
-            output_size=dim_y,
-            hidden_size=args.hs,
-            num_layers=args.nl,
-            lr=args.lr,
-            wd=args.wd,
-            num_ens=args.num_ens,
-            device=args.device,
-            residual=args.residual,
-            batch_norm=args.batch_norm,
-            layer_norm=args.layer_norm,
-            dropout=args.dropout,
-            activation=args.activation,
-        )
+        model_ens = None
+        if args.loss == "batch_QRT":
+            model_ens = QRTNormalAdapterVanilla(
+                input_size=dim_x,
+                hidden_size=args.hs,
+                num_layers=args.nl,
+                lr=args.lr,
+                wd=args.wd,
+                device=args.device
+            )
+        elif args.loss == "batch_QRTC":
+            model_ens = QRTNormalAdapterVanilla(
+                input_size=dim_x,
+                hidden_size=args.hs,
+                num_layers=args.nl,
+                lr=args.lr,
+                wd=args.wd,
+                device=args.device, 
+                x_cal=x_cal, 
+                y_cal=y_cal
+            )
+        else:
+            model_ens = QModelEns(
+                input_size=dim_x + 1,
+                output_size=dim_y,
+                hidden_size=args.hs,
+                num_layers=args.nl,
+                lr=args.lr,
+                wd=args.wd,
+                num_ens=args.num_ens,
+                device=args.device,
+                residual=args.residual,
+                batch_norm=args.batch_norm,
+                layer_norm=args.layer_norm,
+                dropout=args.dropout,
+                activation=args.activation,
+            )
 
         # Data loader
         if not args.boot:
@@ -592,8 +629,25 @@ if __name__ == "__main__":
         x_te.to(testing_device),
         y_te.to(testing_device),
     )
-    if args.loss != 'calipso':
+
+    x_cal, y_cal = None, None
+    if args.loss == 'batch_QRTC':
+        x_trva = torch.cat([x_tr, x_va], dim=0)
+        y_trva = torch.cat([y_tr, y_va], dim=0)
+
+        n = x_trva.size(0)
+        n_train = int(65/90 * n)
+        n_val = int(10/90 * n)
+
+        x_tr, y_tr = x_trva[:n_train], y_trva[:n_train]
+        x_va, y_va = x_trva[n_train:n_train+n_val], y_trva[n_train:n_train+n_val]
+        x_cal, y_cal = x_trva[n_train+n_val:], y_trva[n_train+n_val:]
+
+    if args.loss not in ['calipso',  'batch_QRT', 'batch_QRTC']:
         model_ens.model = [best_va_model if best_va_model is not None else model for best_va_model, model in zip(model_ens.best_va_model, model_ens.model)]
+    if args.loss in ['batch_QRT', 'batch_QRTC']:
+        model_ens.model = model_ens.best_va_model if model_ens.best_va_model is not None else model_ens.model
+
     model_ens.use_device(testing_device)
 
     if args.loss == 'maqr':

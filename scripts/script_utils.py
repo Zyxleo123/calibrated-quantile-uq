@@ -142,8 +142,76 @@ FULL_HYPERPARAMS = {
     "loss": ["maqr", "batch_qr", "batch_int", "batch_cal"],
 }
 
+QRT_HYPERPERAMS = {
+	"skip_existing": [1],
+    "data": ["facebook", "fusion"],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "nl": [8],
+    "hs": [256],
+    "residual": [1],
+    "seed": [0, 1, 2],
+    "loss": ["batch_QRT"],
+}
 
-PROTEIN_HYPERPARAMS = {
+QRT2_HYPERPERAMS = {
+	"skip_existing": [1],
+    "data": ["fusion"],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "nl": [8, 2, 1, 4],
+    "hs": [256, 64, 32, 128],
+    "residual": [1],
+    "seed": [0, 1, 2],
+    "loss": ["batch_QRT"],
+}
+
+QRTC_HYPERPERAMS = {
+	"skip_existing": [1],
+    "data": ["boston", "concrete", "energy", "kin8nm", "naval", "power", "wine", "yacht"],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "nl": [8, 2, 1, 4],
+    "hs": [256, 64, 32, 128],
+    "residual": [1],
+    "seed": [0, 1, 2, 3, 4],
+    "loss": ["batch_QRTC"],
+}
+
+# QRT_HYPERPERAMS = {
+# 	"skip_existing": [1],
+#     "data": ["protein", "boston", "concrete", "energy", "kin8nm", "naval", "power", "wine", "yacht",
+# 			 "diamonds", "facebook", "elevator", "fusion"],
+#     "lr": [1e-3],
+#     "bs": [64],
+#     "batch_norm": [0],
+#     "layer_norm": [0],
+#     "dropout": [0.0],
+#     "num_ens": [1],
+#     "boot": [0],
+#     "nl": [8, 2, 1, 4],
+#     "hs": [256, 64, 32, 128],
+#     "residual": [1],
+#     "seed": [0, 1, 2, 3, 4],
+#     "loss": ["batch_QRT"],
+# }
+
+LOAD1_HYPERPARAMS = {
     "skip_existing": [1],
     "data": ["protein"],
     "lr": [1e-3],
@@ -450,7 +518,6 @@ NL_HS_COMBINATIONS = [
 HYPERPARAMS = {
 	"TEST": TEST_HYPERPARAMS,
 	"FULL": FULL_HYPERPARAMS,
-    "PROTEIN": PROTEIN_HYPERPARAMS,
     "ELEVATOR": ELEVATOR_HYPERPARAMS,
     "FUSION": FUSION_HYPERPARAMS,
     "FACEBOOK": FACEBOOK_HYPERPARAMS,
@@ -465,6 +532,10 @@ HYPERPARAMS = {
     "FUSIONELEVATOR": FUSIONELEVATOR_HYPERPARAMS,
     "FUSIONFACEBOOK1": FUSIONFACEBOOK1_HYPERPARAMS,
     "SEED": SEED_HYPERPARAMS,
+	"LOAD1": LOAD1_HYPERPARAMS,
+	"QRT": QRT_HYPERPERAMS, 
+	"QRT2": QRT2_HYPERPERAMS, 
+	"QRTC": QRTC_HYPERPERAMS
 }
 
 def get_one_hot_param(inputs: dict, default_value_dict: dict) -> Optional[str]:
