@@ -275,8 +275,7 @@ if __name__ == "__main__":
 
     # Save file name
     if "penalty" not in args.loss:
-        save_file_name = args.models_path.replace('_models.pkl', '.pkl')
-
+        save_file_name = os.path.join(args.save_dir, args.models_path.replace('_models.pkl', '.pkl'))
     else:
         # penalizing sharpness
         if args.sharp_all is not None and args.sharp_all:
