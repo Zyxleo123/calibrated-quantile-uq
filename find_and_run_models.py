@@ -13,8 +13,9 @@ def parse_filename(fname):
     out['data'] = tokens[0] if tokens else None
 
     # loss: find "loss" followed by alnum/_ chars
-    m = re.search(r'loss([A-Za-z0-9_]+)', fname)
-    out['loss'] = m.group(1) if m else None
+    splitted = fname.split('loss')[1]
+    loss = splitted.split('_ens1')[0] 
+    out['loss'] = loss
 
     # seed: final numeric token before _models.pkl
     m = re.search(r'_(\d+)_models\.pkl$', fname)
@@ -47,15 +48,12 @@ def main():
         print(f'No candidates found with pattern: {pattern}')
         return
 
+    total_unskipped = 0
     for fp in sorted(candidates):
         fname = os.path.basename(fp)
         hp_dir = os.path.basename(os.path.dirname(fp))
 
-        # Normalize hp_dir and filename (remove - and _ ) and require hp_dir to appear in filename
-        hp_norm = re.sub(r'[-_]', '', hp_dir)
-        fname_norm = re.sub(r'[-_]', '', fname)
-        if hp_norm not in fname_norm:
-            # skip mismatched hp directories
+        if (hp_dir != 'default' and hp_dir.replace('-', '') not in fname) or (hp_dir == 'default' and 'nl2_hs64' not in fname):
             print(f'Skipping mismatched hp directory: {fp}')
             continue
 
@@ -98,9 +96,11 @@ def main():
         cmd_str = ' '.join(map(lambda s: f'"{s}"' if ' ' in s else s, cmd))
         if args.dry_run:
             print(cmd_str)
+            total_unskipped += 1
         else:
             print(f'Executing: {cmd_str}')
             subprocess.run(cmd, check=True)
+    print(f'Total unskipped files processed or to be processed: {total_unskipped}')
 
 if __name__ == '__main__':
     main()

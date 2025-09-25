@@ -308,6 +308,18 @@ if __name__ == "__main__":
     # Set seeds
     set_seeds(args.seed)
 
+    # --- NEW: redirect prints and tqdm to a logfile under ./<data>/<basename_of_savefile>.log ---
+    log_dir = os.path.join("log", args.data)
+    os.makedirs(log_dir, exist_ok=True)
+    log_basename = os.path.basename(save_file_name).replace(".pkl", ".log")
+    log_path = os.path.join(log_dir, log_basename)
+    # open in append mode with line buffering
+    log_f = open(log_path, "a", buffering=1)
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    sys.stdout = log_f
+    sys.stderr = log_f
+
     # Fetching data
     data_args = Namespace(
         data_dir=args.data_dir, dataset=args.data, seed=args.seed
@@ -391,7 +403,8 @@ if __name__ == "__main__":
     # with open(tqdm_out_path, 'a', buffering=1) as tqdm_out:
     import time
     i = 0
-    for controlled_model_ens in tqdm.tqdm(models_controlled):
+    # replace tqdm.tqdm(models_controlled) with file-targeted tqdm
+    for controlled_model_ens in tqdm.tqdm(models_controlled, file=log_f):
         current_metrics_tmp = {}
         current_metrics_tmp['model_controlled'] = controlled_model_ens
         controlled_model_ens.use_device(testing_device)
@@ -437,14 +450,14 @@ if __name__ == "__main__":
 
         # Other scoring rules on test
         args_for_score = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99), alpha_list=torch.linspace(0.01, 0.20, 20), loss=args.loss)
-        start_time = time.time()
-        print("start bag_nll test time")
-        try:
-            current_metrics_tmp['te_bag_nll_controlled'] = float(bag_nll(controlled_model_ens, x_te, y_te, args_for_score))
-        except Exception as e:
-            current_metrics_tmp['te_bag_nll_controlled'] = float('nan')
-            raise e
-        print(f"bag_nll test time: {time.time() - start_time:.2f} seconds")
+        # start_time = time.time()
+        # print("start bag_nll test time")
+        # try:
+        #     current_metrics_tmp['te_bag_nll_controlled'] = float(bag_nll(controlled_model_ens, x_te, y_te, args_for_score))
+        # except Exception as e:
+        #     current_metrics_tmp['te_bag_nll_controlled'] = float('nan')
+        #     raise e
+        # print(f"bag_nll test time: {time.time() - start_time:.2f} seconds")
         start_time = time.time()
         print("start crps_score test time")
         try:
@@ -518,14 +531,14 @@ if __name__ == "__main__":
             # Other scoring rules
             args_for_score = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99), alpha_list=torch.linspace(0.01, 0.20, 20), recal_model=recal_model_controlled_tmp, recal_type="sklearn", loss=args.loss)
             
-            start_time = time.time()
-            print("start recal bag_nll")
-            try:
-                current_metrics_tmp['recal_te_bag_nll_controlled'] = float(bag_nll(controlled_model_ens, x_te, y_te, args_for_score))
-            except Exception as e:
-                current_metrics_tmp['recal_te_bag_nll_controlled'] = float('nan')
-                raise e
-            print(f"recal bag_nll time: {time.time() - start_time:.2f} seconds")
+            # start_time = time.time()
+            # print("start recal bag_nll")
+            # try:
+            #     current_metrics_tmp['recal_te_bag_nll_controlled'] = float(bag_nll(controlled_model_ens, x_te, y_te, args_for_score))
+            # except Exception as e:
+            #     current_metrics_tmp['recal_te_bag_nll_controlled'] = float('nan')
+            #     raise e
+            # print(f"recal bag_nll time: {time.time() - start_time:.2f} seconds")
             start_time = time.time()
             print("start recal crps_score")
             try:
@@ -630,4 +643,8 @@ if __name__ == "__main__":
     with open(save_file_name, "wb") as pf:
         pkl.dump(save_dic, pf)
     print(f"Results saved to {save_file_name}")
-    # tqdm_out.close()
+
+    # restore stdout/stderr and close the log file
+    sys.stdout = old_stdout
+    sys.stderr = old_stderr
+    log_f.close()
