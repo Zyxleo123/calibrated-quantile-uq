@@ -51,15 +51,23 @@ def main():
         fname = os.path.basename(fp)
         hp_dir = os.path.basename(os.path.dirname(fp))
 
-        # filter: hp_dir must be present in filename (hyperparam dir consistency)
-        if hp_dir.replace('-', '') not in fname:
+        # Normalize hp_dir and filename (remove - and _ ) and require hp_dir to appear in filename
+        hp_norm = re.sub(r'[-_]', '', hp_dir)
+        fname_norm = re.sub(r'[-_]', '', fname)
+        if hp_norm not in fname_norm:
             # skip mismatched hp directories
             print(f'Skipping mismatched hp directory: {fp}')
             continue
-            
-        if args.dataset not in fname:
-            # skip files not matching dataset
-            print(f'Skipping file not matching dataset: {fname}')
+
+        parsed = parse_filename(fname)
+        if not parsed['data'] or not parsed['loss'] or not parsed['seed']:
+            # skip files that don't have minimal parseable info
+            print(f'Skipping unparseable file: {fname}')
+            continue
+
+        # Ensure the parsed data matches the requested dataset
+        if parsed['data'] != args.dataset:
+            print(f"Skipping file whose parsed data '{parsed['data']}' != dataset '{args.dataset}': {fname}")
             continue
 
         # skip if output (without "_models") already exists
@@ -69,15 +77,13 @@ def main():
             print(f'Skipping existing output: {out_fp}')
             continue
 
-        parsed = parse_filename(fname)
-        if not parsed['data'] or not parsed['loss'] or not parsed['seed']:
-            # skip files that don't have minimal parseable info
-            print(f'Skipping unparseable file: {fname}')
-            continue
+        # set save_dir to the directory where the model file lives
+        save_dir = os.path.dirname(fp)
 
         cmd = [
             'python', args.main,
             '--models_path', fp,
+            '--save_dir', save_dir,
             '--data', parsed['data'],
             '--loss', parsed['loss'],
             '--seed', parsed['seed'],
