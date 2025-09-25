@@ -165,48 +165,60 @@ def crps_score(model, X, y, args): # all done
         pred_y = model.predict(model_in)
     pred_y_mat = pred_y.reshape(num_q, num_pts).T
 
-    p_list = p_list.numpy().flatten()
-    scores_list = []
-    for pt_idx in range(num_pts):
-        curr_y = float(y[pt_idx].item())
-        curr_q_preds = pred_y_mat[pt_idx].cpu().numpy().flatten()
-        min_q_pred, max_q_pred = np.min(curr_q_preds), np.max(curr_q_preds)
+    # p_list = p_list.numpy().flatten()
+    # scores_list = []
+    # for pt_idx in range(num_pts):
+    #     curr_y = float(y[pt_idx].item())
+    #     curr_q_preds = pred_y_mat[pt_idx].cpu().numpy().flatten()
+    #     min_q_pred, max_q_pred = np.min(curr_q_preds), np.max(curr_q_preds)
 
-        # #####
-        # curr_cdf = interp1d(curr_q_preds, p_list, kind='linear')
-        # sample_xs = np.linspace(min_q_pred, max_q_pred, resolution)
-        # sample_ys = curr_cdf(sample_xs)
-        #
-        # if curr_y < min_q_pred:
-        #     curr_crps = np.nanmean(np.square(1 - sample_ys))
-        # elif max_q_pred < curr_y:
-        #     curr_crps = np.nanmean(np.square(sample_ys))
-        # else:
-        #     assert (min_q_pred <= curr_y) and (curr_y <= max_q_pred)
-        #     below_idx = (sample_xs <= curr_y).astype(float)
-        #     above_idx = 1.0 - below_idx
-        #     crps_arr = ((np.square(sample_ys) * below_idx) +
-        #                 (np.square(1 - sample_ys) * above_idx))
-        #     curr_crps = np.nanmean(crps_arr)
-        # #####
+    #     # #####
+    #     # curr_cdf = interp1d(curr_q_preds, p_list, kind='linear')
+    #     # sample_xs = np.linspace(min_q_pred, max_q_pred, resolution)
+    #     # sample_ys = curr_cdf(sample_xs)
+    #     #
+    #     # if curr_y < min_q_pred:
+    #     #     curr_crps = np.nanmean(np.square(1 - sample_ys))
+    #     # elif max_q_pred < curr_y:
+    #     #     curr_crps = np.nanmean(np.square(sample_ys))
+    #     # else:
+    #     #     assert (min_q_pred <= curr_y) and (curr_y <= max_q_pred)
+    #     #     below_idx = (sample_xs <= curr_y).astype(float)
+    #     #     above_idx = 1.0 - below_idx
+    #     #     crps_arr = ((np.square(sample_ys) * below_idx) +
+    #     #                 (np.square(1 - sample_ys) * above_idx))
+    #     #     curr_crps = np.nanmean(crps_arr)
+    #     # #####
 
-        ##### Non-inverted
-        if curr_y < min_q_pred:
-            curr_crps = np.mean(np.square(1 - p_list))
-        elif max_q_pred < curr_y:
-            curr_crps = np.mean(np.square(p_list))
-        else:
-            assert (np.min(curr_q_preds) <= curr_y) and \
-                   (curr_y <= np.max(curr_q_preds))
-            below_idx = (curr_q_preds <= curr_y).astype(float)
-            above_idx = 1.0 - below_idx
-            curr_crps = np.mean((np.square(p_list) * below_idx) + (np.square(1 - p_list) * above_idx))
-        #####
-        if not np.isfinite(curr_crps):
-            raise ValueError("CRPS is not finite")
-        scores_list.append(curr_crps)
+    #     ##### Non-inverted
+    #     if curr_y < min_q_pred:
+    #         curr_crps = np.mean(np.square(1 - p_list))
+    #     elif max_q_pred < curr_y:
+    #         curr_crps = np.mean(np.square(p_list))
+    #     else:
+    #         assert (np.min(curr_q_preds) <= curr_y) and \
+    #                (curr_y <= np.max(curr_q_preds))
+    #         below_idx = (curr_q_preds <= curr_y).astype(float)
+    #         above_idx = 1.0 - below_idx
+    #         curr_crps = np.mean((np.square(p_list) * below_idx) + (np.square(1 - p_list) * above_idx))
+    #     #####
+    #     if not np.isfinite(curr_crps):
+    #         raise ValueError("CRPS is not finite")
+    #     scores_list.append(curr_crps)
 
-    loss = np.mean(scores_list)
+    p_list = p_list.flatten().to(pred_y_mat.device)
+    min_q_pred, max_q_pred = torch.min(pred_y_mat, axis=1)[0], torch.max(pred_y_mat, axis=1)[0]
+    curr_crps = torch.zeros(num_pts).to(pred_y_mat.device)
+    curr_crps[y.flatten() < min_q_pred] = torch.mean(torch.square(1 - p_list))
+    curr_crps[y.flatten() > max_q_pred] = torch.mean(torch.square(p_list))
+    mask = torch.logical_and(y.flatten() >= min_q_pred, y.flatten() <= max_q_pred)
+    curr_crps[mask] = torch.mean(torch.square(p_list) * (pred_y_mat <= y)\
+        + torch.square(1 - p_list) * (pred_y_mat > y), dim=1)[mask]
+    if not torch.isfinite(curr_crps).all():
+        raise ValueError("CRPS is not finite")
+    # scores_list = curr_crps
+
+    loss = torch.mean(curr_crps).item()
     return loss
 
 
@@ -663,7 +675,7 @@ def bag_nll(model, X, y, args): # working
     # print(og_result, new_result, np.nanmean(-1*norm.logpdf(y.cpu().numpy().reshape(-1), loc=opt_mean.cpu().numpy(), scale=opt_std.cpu().numpy())))
     # print(np.nanmean([obj((og_means[i], og_stds[i])) for i in range(1000)]), np.nanmean([obj((opt_mean[i].item(), opt_std[i].item())) for i in range(1000)]))
     # print(og_result - new_result)
-    return new_result
+    return new_result.item()
 
 
 ### main procedure ###
