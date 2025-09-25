@@ -617,34 +617,53 @@ def bag_nll(model, X, y, args): # working
 
     pred_y_mat = pred_y.reshape(num_q, num_pts).T
     nll_list = []
-    for pt_idx in range(num_pts):
-        curr_quantiles = pred_y_mat[pt_idx].detach().cpu().numpy().flatten()
-        init_mean = float(np.mean(curr_quantiles))
-        init_std = float(np.std(curr_quantiles))
+    # og_means = []
+    # og_stds = []
+    # for pt_idx in range(num_pts):
+    #     curr_quantiles = pred_y_mat[pt_idx].detach().cpu().numpy().flatten()
+    #     init_mean = float(np.mean(curr_quantiles))
+    #     init_std = float(np.std(curr_quantiles))
 
-        def obj(x):
-            trial_qs = norm.ppf(q_list.cpu().numpy(),
-                                loc=float(x[0]), scale=float(x[1])).flatten()
-            sum_squared_diff = np.sum(np.square(trial_qs - curr_quantiles))
-            return sum_squared_diff
-        bounds = [(init_mean - (2 * init_std), init_mean + (2 * init_std)),
-                  (1e-10, 3 * init_std + 1e-10)]
-        # result = minimize(obj, x0=[init_mean, init_std], bounds=bounds)
-        result = minimize(
-            obj,
-            x0=[init_mean, init_std],
-            bounds=bounds,
-            method="L-BFGS-B",
-            options={"ftol": 1e-6, "maxiter": 500}
-        )
-        if not result['success']:
-            print('pt {} bag not optimized well'.format(pt_idx))
-        opt_mean, opt_std = result['x'][0], result['x'][1]
+    #     def obj(x):
+    #         trial_qs = norm.ppf(q_list.cpu().numpy(),
+    #                             loc=float(x[0]), scale=float(x[1])).flatten()
+    #         sum_squared_diff = np.sum(np.square(trial_qs - curr_quantiles))
+    #         return sum_squared_diff
+    #     bounds = [(init_mean - (2 * init_std), init_mean + (2 * init_std)),
+    #               (1e-10, 3 * init_std + 1e-10)]
+    #     # result = minimize(obj, x0=[init_mean, init_std], bounds=bounds)
+    #     result = minimize(
+    #         obj,
+    #         x0=[init_mean, init_std],
+    #         bounds=bounds,
+    #         method="L-BFGS-B",
+    #         options={"ftol": 1e-6, "maxiter": 500}
+    #     )
+    #     if not result['success']:
+    #         print('pt {} bag not optimized well'.format(pt_idx))
+    #     opt_mean, opt_std = result['x'][0], result['x'][1]
+    #     og_means.append(opt_mean)
+    #     og_stds.append(opt_std)
+    #     pt_nll = norm.logpdf(float(y[pt_idx]), loc=opt_mean, scale=opt_std)
+    #     nll_list.append(-1 * pt_nll)
+    # og_result = np.nanmean(nll_list)
 
-        pt_nll = norm.logpdf(float(y[pt_idx]), loc=opt_mean, scale=opt_std)
-        nll_list.append(-1 * pt_nll)
-
-    return np.nanmean(nll_list)
+    device = pred_y_mat.device
+    z = torch.special.ndtri(q_list)
+    ones = torch.ones(num_q, device=q_list.device)
+    X = torch.stack([ones, z], dim=1).to(device)  # Shape: (num_quantiles, 2)
+    coeffs = torch.linalg.inv(X.T @ X) @ X.T @ pred_y_mat.T
+    opt_mean, opt_std = coeffs[0, :], coeffs[1, :]
+    opt_std = torch.clamp(opt_std, min=1e-6)
+    from torch.distributions import Normal
+    dist = Normal(loc=opt_mean, scale=opt_std)
+    nll_list = -dist.log_prob(y.reshape(-1))
+    new_result = torch.nanmean(nll_list)
+    # print((np.array(og_means)-opt_mean.cpu().numpy()).mean(), (np.array(og_stds)-opt_std.cpu().numpy()).mean())
+    # print(og_result, new_result, np.nanmean(-1*norm.logpdf(y.cpu().numpy().reshape(-1), loc=opt_mean.cpu().numpy(), scale=opt_std.cpu().numpy())))
+    # print(np.nanmean([obj((og_means[i], og_stds[i])) for i in range(1000)]), np.nanmean([obj((opt_mean[i].item(), opt_std[i].item())) for i in range(1000)]))
+    # print(og_result - new_result)
+    return new_result
 
 
 ### main procedure ###
