@@ -4,7 +4,8 @@ import tqdm
 import numpy as np
 import torch
 import torch.nn as nn
-
+import hashlib
+import time
 NUM_PARTS = 100
 # sys.path.append('../utils/NNKit')
 # sys.path.append('utils')
@@ -14,6 +15,9 @@ from scipy.interpolate import interp1d
 
 sys.path.append(os.path.dirname(os.path.realpath(__file__)))
 from NNKit.models.model import vanilla_nn
+
+forward_cache = dict()
+enable_cache = False
 
 """
 Define wrapper uq_model class
@@ -175,6 +179,16 @@ class EnhancedMLP(nn.Module):
 
     def forward(self, x):
         # x: (batch, features)
+        if enable_cache:
+            # print("Cache enabled")
+            # start_time = time.time()
+            x_bytes = x.detach().cpu().numpy().tobytes()
+            x_hash = hashlib.sha256(x_bytes).hexdigest()
+            key = (str(id(self)), x_hash)
+            # print("Cache time: ", time.time() - start_time)
+            if key in forward_cache:
+                # print("Cache hit")
+                return forward_cache[key].to(x.device)
         if self.num_layers == 1:
             return self.final(x)
         h = x
@@ -199,6 +213,8 @@ class EnhancedMLP(nn.Module):
                     h = h + inp
 
         out = self.final(h)
+        if enable_cache:
+            forward_cache[key] = out.detach().cpu()
         return out
 
 
