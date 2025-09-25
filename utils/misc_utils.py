@@ -67,7 +67,6 @@ def test_uq(
 
     num_pts = x.shape[0]
     y = y.detach().reshape(num_pts, -1)
-
     quantile_preds = model.predict_q(
         x,
         exp_props,

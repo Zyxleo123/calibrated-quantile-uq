@@ -4,6 +4,9 @@ import tqdm
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+from torch.distributions import Categorical, MixtureSameFamily, Distribution, constraints, CumulativeDistributionTransform, TransformedDistribution, Uniform
+from pyro.distributions import Logistic
 
 # sys.path.append('../utils/NNKit')
 # sys.path.append('utils')
@@ -539,6 +542,426 @@ class QModelEns(uq_model):
         assert pred_mat.shape == (num_x, num_q)
         return pred_mat
 
+def _logistic_pdf(x, mu, s):
+    t = (x - mu) / s
+    e = torch.exp(-t)
+    return e / (s * (1.0 + e) ** 2 + 1e-12)
+
+def _logistic_cdf(x, mu, s):
+    t = (x - mu) / s
+    return 1.0 / (1.0 + torch.exp(-t))
+
+
+# def _kde_refl_log_density(z, centers, b):
+#     B = centers.shape[0]
+#     s = b * (float(B) ** (-1.0 / 5.0))
+#     s = max(s, 1e-3)
+#     z = z.view(-1, 1)
+#     c = centers.view(1, -1)
+#     main = _logistic_pdf(z, c, s)
+#     left = _logistic_pdf(-z, c, s)
+#     right = _logistic_pdf(2.0 - z, c, s)
+#     dens = (main + left + right).mean(dim=1)
+#     return torch.log(dens + 1e-12)
+
+def icdf_from_cdf(dist, alpha, epsilon=1e-5, warn_precision=4e-3, low=None, high=None):
+    """
+    Compute the quantiles of a distribution using binary search, in a vectorized way.
+    """
+
+    alpha = adjust_unit_tensor(alpha)
+    alpha, _ = torch.broadcast_tensors(alpha, torch.zeros(dist.batch_shape))
+    # Expand to the left and right until we are sure that the quantile is in the interval
+    expansion_factor = 4
+    if low is None:
+        low = torch.full(alpha.shape, -1.0)
+        while (mask := dist.cdf(low) > alpha + epsilon).any():
+            low[mask] *= expansion_factor
+    else:
+        low = low.clone()
+    if high is None:
+        high = torch.full(alpha.shape, 1.0)
+        while (mask := dist.cdf(high) < alpha - epsilon).any():
+            high[mask] *= expansion_factor
+    else:
+        high = high.clone()
+    low, high, _ = torch.broadcast_tensors(low, high, torch.zeros(alpha.shape))
+    assert dist.cdf(low).shape == alpha.shape
+
+    # Binary search
+    prev_precision = None
+    while True:
+        # To avoid "UserWarning: Use of index_put_ on expanded tensors is deprecated".
+        low = low.clone()
+        high = high.clone()
+        precision = (high - low).max()
+        # Stop if we have enough precision
+        if precision < 1e-5:
+            break
+        # Stop if we can not improve the precision anymore
+        if prev_precision is not None and precision >= prev_precision:
+            break
+        mid = (low + high) / 2
+        mask = dist.cdf(mid) < alpha
+        low[mask] = mid[mask]
+        high[~mask] = mid[~mask]
+        prev_precision = precision
+
+    if precision > warn_precision:
+        pass
+        # log.warn(f'Imprecise quantile computation with precision {precision}')
+    return low
+
+def adjust_tensor(x, a=0.0, b=1.0, *, epsilon=1e-4):
+    # We accept that, due to rounding errors, x is not in the interval up to epsilon
+    mask = (a - epsilon <= x) & (x <= b + epsilon)
+    assert mask.all(), (x[~mask], a, b)
+    return x.clamp(a, b)
+
+def adjust_unit_tensor(x, epsilon=1e-4):
+    return adjust_tensor(x, a=0.0, b=1.0, epsilon=epsilon)
+
+class ReflectedDist(Distribution):
+    support = constraints.real
+    has_rsample = False
+
+    def __init__(self, dist, a=-torch.inf, b=torch.inf):
+        self.dist = dist
+        self.a = a
+        self.b = b
+
+    @property
+    def batch_shape(self):
+        return self.dist._batch_shape
+
+    def cdf(self, value):
+        value = adjust_tensor(value, self.a, self.b)
+        vb = self.dist.cdf(2 * self.b - value)
+        va = self.dist.cdf(2 * self.a - value)
+        v = self.dist.cdf(value)
+        # Beware that the CDF of MixtureSameFamily can be slightly outside [0, 1] due to precision errors.
+        vb = adjust_tensor(vb, self.a, self.b)
+        va = adjust_tensor(va, self.a, self.b)
+        v = adjust_tensor(v, self.a, self.b)
+        res = 1 - vb + v - va
+        assert (vb <= 1).all() and (0 <= va).all() and (0 <= v).all() and (v <= 1).all(), f'{vb.max()}, {va.min()}, {v.min()}, {v.max()}'
+        res[value < self.a] = 0
+        res[self.b < value] = 1
+        assert (0 <= res).all() and (res <= 1).all(), f'{res.min()}, {res.max()}'
+        return res
+
+    def icdf(self, value):
+        value = adjust_unit_tensor(value)
+        return icdf_from_cdf(self, value, low=self.a, high=self.b)
+
+    def log_prob(self, value):
+        value = adjust_tensor(value, self.a, self.b)
+
+        # The code below is a more stable alternative to the following:
+        # res = (
+        #     self.dist.log_prob(2 * self.b - value).exp()
+        #     + self.dist.log_prob(value).exp()
+        #     + self.dist.log_prob(2 * self.a - value).exp()
+        # ).log()
+
+        log_probs = torch.stack([
+            self.dist.log_prob(2 * self.b - value),
+            self.dist.log_prob(value),
+            self.dist.log_prob(2 * self.a - value)
+        ], dim=-1)
+        res = torch.logsumexp(log_probs, dim=-1)
+
+        # .clone() is needed to avoid "RuntimeError: one of the variables needed for
+        # gradient computation has been modified by an inplace operation."
+        res = res.clone()
+        res[value < self.a] = -torch.inf
+        res[self.b < value] = -torch.inf
+        return res
+
+    def sample(self, sample_shape=torch.Size()):
+        shape = torch.Size(sample_shape) + self.dist.batch_shape
+        rand = torch.rand(shape, device=self.a.device)
+        return self.icdf(rand)
+    
+class MixtureDist(MixtureSameFamily):
+    def __init__(self, component_dist_class, means, stds, *, probs=None, logits=None):
+        mix_dist = Categorical(probs=probs, logits=logits)
+        self.component_dist_class = component_dist_class
+        component_dist = self.component_dist_class(means, stds)
+        super().__init__(mix_dist, component_dist)
+
+    def icdf(self, value):
+        return icdf_from_cdf(self, value)
+
+    def affine_transform(self, loc, scale):
+        """
+        Let $X ~ Dist(\mu, \sigma)$. Then $a + bX ~ Dist(a + b \mu, b \sigma)$.
+        The reasoning is similar for a mixture.
+        """
+        component_dist = self.component_distribution
+        mix_dist = self.mixture_distribution
+        means, stds = component_dist.loc, component_dist.scale
+        means = loc + scale * means
+        stds = scale * stds
+        return type(self)(means, stds, logits=mix_dist.logits)
+
+    def unnormalize(self, scaler):
+        return self.affine_transform(scaler.mean_, scaler.scale_)
+
+    def normalize(self, scaler):
+        return self.affine_transform(-scaler.mean_ / scaler.scale_, 1.0 / scaler.scale_)
+
+    def rsample(self, sample_shape=torch.Size(), tau=1):
+        """
+        Returns:
+            Tensor: A tensor of shape `[batch_size, n_samples]`
+        """
+        raise NotImplementedError()
+
+class LogisticMixtureDist(MixtureDist):
+    def __init__(self, *args, base_module=None, **kwargs):
+        super().__init__(Logistic, *args, **kwargs)
+        self.base_module = base_module
+
+    def log_sigmoid(x):
+        return -torch.where(x > 0, torch.log(1 + torch.exp(-x)), x + torch.log(1 + torch.exp(-x)))
+    
+    def log_prob(self, x):
+        # with elapsed_timer() as time:
+        res = super().log_prob(x)
+        # if self.base_module is not None:
+        #     self.base_module.advance_timer('logistic_log_prob_time', time())
+        return res
+
+class SmoothEmpiricalCDF(CumulativeDistributionTransform):
+    def __init__(
+        self,
+        x,
+        device, 
+        b=0.1,
+        epoch=None,
+        batch_idx=None,
+        base_module=None,
+        **kwargs,
+    ):
+        self.epoch = epoch
+        self.batch_idx = batch_idx
+        assert x.dim() == 1
+        N = x.shape[0]
+        dist = LogisticMixtureDist(x, torch.tensor(b * N ** (-1 / 5)).to(device), probs=torch.ones_like(x).to(device), base_module=base_module)
+        dist = ReflectedDist(dist, torch.tensor(0.0).to(device), torch.tensor(1.0).to(device))
+        super().__init__(dist, **kwargs)
+
+class UnitUniform(Uniform):
+    def __init__(self, batch_shape, device, *args, **kwargs):
+        super().__init__(
+            torch.zeros(batch_shape).to(device), torch.ones(batch_shape).to(device), *args, **kwargs
+        )
+
+    def log_prob(self, value):
+        # Workaround because values of 0 and 1 are not allowed
+        eps = 1e-7
+        value[value == 0.0] += eps
+        value[value == 1.0] -= eps
+        return super().log_prob(value)
+
+class RecalibratedDist(TransformedDistribution):
+    def __init__(self, dist, posthoc_model, device):
+        base_dist = UnitUniform(dist.batch_shape, device)
+        transforms = [
+            posthoc_model.inv,
+            CumulativeDistributionTransform(dist).inv,
+        ]
+        super().__init__(base_dist, transforms)
+
+def _kde_refl_log_density(z, centers, b):
+    B = centers.shape[0]
+    s = b * (float(B) ** (-1.0 / 5.0))
+    s = max(s, 1e-3)
+
+    z = z.view(-1, 1)
+    c = centers.view(1, -1)
+
+    main = _logistic_pdf(z, c, s)
+    left = _logistic_pdf(-z, c, s)
+    right = _logistic_pdf(2.0 - z, c, s)
+
+    dens = (main + left + right).mean(dim=1)
+    log_dens = torch.log(dens + 1e-12)
+
+    mask = (z.squeeze(-1) >= 0) & (z.squeeze(-1) <= 1)
+    return torch.where(mask, log_dens, torch.zeros_like(log_dens))
+
+
+class QRTNormalVanilla(nn.Module):
+    """
+    Single NNKit.vanilla_nn that outputs two values per x: (mean, rho).
+    """
+    def __init__(self, input_size, hidden_size, num_layers):
+        super().__init__()
+        # One network with 2-dimensional output
+        self.net = EnhancedMLP(
+            input_size=input_size,
+            output_size=2,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            residual=True
+        )
+
+    def forward(self, x):
+        out = self.net(x)
+        if out.dim() == 1:
+            # unlikely, but guard
+            out = out.view(-1, 2)
+        mean = out[:, 0]
+        rho = out[:, 1]
+        std = F.softplus(rho) + 1e-3
+        return mean, std
+
+
+class QRTNormalAdapterVanilla:
+    def __init__(self, input_size, hidden_size, num_layers, lr, wd, device, qrt_alpha=1.0, kde_b=0.1, x_cal=None, y_cal=None):
+        self.device = device
+        self.model = QRTNormalVanilla(input_size, hidden_size, num_layers).to(device)
+        self.opt = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=wd)
+        self.done_training = False
+        self.keep_training = True
+        self.waiting = True
+        self.best_va_loss = np.inf
+        self.best_va_model = None
+        self.best_va_ep = 0
+        self.qrt_alpha = float(qrt_alpha)
+        self.kde_b = float(kde_b)
+        if x_cal is not None:
+            self.x_cal = x_cal.to(device)
+            self.y_cal = y_cal.to(device)
+        else:
+            self.x_cal, self.y_cal = None, None
+
+    def use_device(self, device):
+        self.device = device
+        if self.best_va_model is not None:
+            self.best_va_model = self.best_va_model.to(device)
+        if self.x_cal is not None:
+            self.x_cal = self.x_cal.to(device)
+            self.y_cal = self.y_cal.to(device)
+        self.model = self.model.to(device)
+
+    def _dist(self, x):
+        mean, std = self.model(x)
+        return torch.distributions.Normal(mean, std)
+
+    def loss(self, loss_fn, x, y, q_list, batch_q, take_step, args):
+        x = x.to(self.device)
+        y = y.to(self.device).squeeze(-1)
+        dist = self._dist(x)
+        pits = dist.cdf(y).clamp(1e-6, 1 - 1e-6)
+        log_phi = _kde_refl_log_density(pits, pits, b=self.kde_b)
+        loss = -(dist.log_prob(y) + self.qrt_alpha * log_phi).mean()
+        if take_step:
+            self.opt.zero_grad(set_to_none=True)
+            loss.backward()
+            self.opt.step()
+        return loss.detach().unsqueeze(0)
+
+    def predict(self, cdf_in, conf_level=0.95, score_distr="z", recal_model=None, recal_type=None):
+        # assert False, "predict shouldnt be called..."
+        x = cdf_in[:, :-1]
+        q = cdf_in[:, -1].clamp(1e-6, 1 - 1e-6)
+        with torch.no_grad():
+            dist = self._dist(x)
+            if recal_model is not None:
+                if recal_type == "torch":
+                    recal_model.to(q.device)
+                    q = recal_model(q.view(-1, 1)).flatten()
+                elif recal_type == "sklearn":
+                    q_np = q.detach().cpu().numpy().reshape(-1, 1)
+                    q = torch.from_numpy(recal_model.predict(q_np)).to(q.device).flatten()
+                else:
+                    raise ValueError("recal_type incorrect")
+            if self.x_cal is not None:
+                dist_cal = self._dist(self.x_cal)
+                z_cal = dist_cal.cdf(self.y_cal.squeeze(-1))
+                dist = RecalibratedDist(dist, SmoothEmpiricalCDF(z_cal, self.device), self.device)
+            yq = dist.icdf(q).view(-1, 1)
+        return yq
+
+    def predict_q(self, x, q_list=None, ens_pred_type="conf", recal_model=None, recal_type=None):
+        x = x.to(self.device)
+        with torch.no_grad():
+            # dist = self._dist(x)
+            if q_list is None:
+                q_list = torch.arange(0.01, 1.00, 0.01, device=x.device, dtype=x.dtype)
+            else:
+                q_list = q_list.flatten().to(x.device, dtype=x.dtype)
+            if recal_model is not None:
+                if recal_type == "torch":
+                    recal_model.to(q_list.device)
+                    q_in = recal_model(q_list.view(-1, 1)).flatten()
+                elif recal_type == "sklearn":
+                    q_np = q_list.detach().cpu().numpy().reshape(-1, 1)
+                    q_in = torch.from_numpy(recal_model.predict(q_np)).to(x.device).flatten().to(x.dtype)
+                else:
+                    raise ValueError("recal_type incorrect")
+            else:
+                q_in = q_list
+
+            q_in = q_in.clamp(1e-6, 1 - 1e-6)
+            q_expanded = q_in.repeat(x.size(0)).view(-1, 1)
+            x_expanded = x.repeat_interleave(q_in.size(0), dim=0)
+            dist_expanded = self._dist(x_expanded)
+
+            if self.x_cal is not None:
+                dist_cal = self._dist(self.x_cal)
+                z_cal = dist_cal.cdf(self.y_cal.squeeze(-1))
+                dist_expanded = RecalibratedDist(dist_expanded, SmoothEmpiricalCDF(z_cal, self.device), self.device)
+                # dist_expanded = TransformedDistribution(dist_expanded, transforms=[transform])
+            yq = dist_expanded.icdf(q_expanded.view(-1)).view(x.size(0), q_in.size(0))
+        return yq
+    
+    def update_va_loss(
+        self, loss_fn, x, y, q_list, batch_q, curr_ep, num_wait, args
+    ):
+        if self.waiting:
+            # compute in parts to save memory
+            with torch.no_grad():
+                num_parts = 20
+                size_parts = len(x) // num_parts
+                loss_parts = []
+                for i in range(num_parts):
+                    if i != num_parts - 1:
+                        loss_part = self.loss(
+                            loss_fn,
+                            x[i * size_parts : (i + 1) * size_parts],
+                            y[i * size_parts : (i + 1) * size_parts],
+                            q_list,
+                            batch_q,
+                            take_step=False,
+                            args=args,
+                        )
+                    else:
+                        loss_part = self.loss(
+                            loss_fn,
+                            x[i * size_parts :],
+                            y[i * size_parts :],
+                            q_list,
+                            batch_q,
+                            take_step=False,
+                            args=args,
+                        )
+                    loss_parts.append(loss_part)
+                va_loss = torch.mean(torch.stack(loss_parts), dim=0).cpu().numpy()
+
+
+        if self.waiting:
+            if va_loss < self.best_va_loss:
+                self.best_va_loss = va_loss
+                self.best_va_ep = curr_ep
+                self.best_va_model = deepcopy(self.model)
+            else:
+                if curr_ep - self.best_va_ep > num_wait:
+                    self.waiting = False
+                    print(f"Early stopping at ep {curr_ep}")
 
 if __name__ == "__main__":
     temp_model = QModelEns(
