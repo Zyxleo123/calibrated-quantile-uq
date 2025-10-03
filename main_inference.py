@@ -368,7 +368,6 @@ if __name__ == "__main__":
         y_te_centered = y_te - torch.from_numpy(pred_mean_te).to(y_te.device)
 
     # Loss function
-    loss_fn = get_loss_fn(args.loss)
     args.scale = True if "scale" in args.loss else False
     batch_loss = True if "batch" in args.loss else False
 
