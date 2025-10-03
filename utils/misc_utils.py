@@ -58,7 +58,8 @@ def test_uq(
     recal_type=None,
     make_plots=False,
     test_group_cal=False,
-    output_sharp_score_only=False
+    output_sharp_score_only=False,
+    in_batch=True,
 ):
 
     # obs_props, quantile_preds, quantile_preds_mat = \
@@ -73,6 +74,7 @@ def test_uq(
         ens_pred_type="conf",
         recal_model=recal_model,
         recal_type=recal_type,
+        in_batch=in_batch,
     )  # of shape (num_pts, num_q)
     obs_props = torch.mean((quantile_preds >= y).float(), dim=0).flatten()
 

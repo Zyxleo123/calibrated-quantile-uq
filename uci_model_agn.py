@@ -556,6 +556,7 @@ def main(from_main_py=False, args=None, inference_only=False):
                 else:
                     gen_model(dataset, seed, f_path, device, train_val_data=(x_tr, x_va, y_tr, y_va)) #Technically wrong, needs to use consistent model, but very little diff
             with open(f_path, 'rb') as pf:
+                print('loading mean model from {}'.format(f_path))
                 mean_model = pkl.load(pf)
                 mean_model.to(device)
 

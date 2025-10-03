@@ -880,6 +880,7 @@ class QRTNormalAdapterVanilla:
         ens_pred_type="conf",
         recal_model=None,
         recal_type=None,
+        in_batch=True,
     ):
         x = x.to(self.device)
 
@@ -915,7 +916,7 @@ class QRTNormalAdapterVanilla:
 
             results = []
 
-            batch_size = len(x) // NUM_PARTS
+            batch_size = len(x) // NUM_PARTS if in_batch else len(x)
             for start in range(0, x.size(0), batch_size):
                 end = start + batch_size
                 x_batch = x[start:end]

@@ -115,8 +115,8 @@ def parse_args():
         default=200,
         help="number of epochs to wait before early stopping",
     )
-    parser.add_argument("--nl", type=int, default=1, help="number of layers")
-    parser.add_argument("--hs", type=int, default=32, help="hidden size")
+    parser.add_argument("--nl", type=int, default=8, help="number of layers")
+    parser.add_argument("--hs", type=int, default=256, help="hidden size")
 
     parser.add_argument("--lr", type=float, default=1e-3, help="learning rate")
     parser.add_argument("--wd", type=float, default=0.0, help="weight decay")
@@ -196,6 +196,9 @@ def parse_args():
         "--skip_existing", type=int, default=1, help="1 to skip existing results"
     )
     parser.add_argument("--debug", type=int, default=0, help="1 to debug")
+    parser.add_argument(
+        "--training_only", type=int, default=1, help="1 to only train, not test"
+    )
     
     # MAQR-specific arguments
     parser.add_argument("--dist_type", type=str, default="kernel", help="distance type for MAQR")
@@ -605,7 +608,8 @@ if __name__ == "__main__":
                 y_range,
                 recal_model=None,
                 recal_type=None,
-                output_sharp_score_only=True
+                output_sharp_score_only=True,
+                in_batch=False,
             )
 
             model_ens.use_device(args.device)
@@ -619,9 +623,10 @@ if __name__ == "__main__":
 
     models = [entry['model'] for entry in frontier.get_entries()]
     pkl.dump(models, open(save_file_name.replace('.pkl', '_models.pkl'), 'wb'))
-    if args.loss == 'calipso':
-        exit(0)
+    pkl.dump(model_ens.best_va_model, open(save_file_name.replace('.pkl', '_early_stopped_model.pkl'), 'wb'))
     print(f"Model saved to {save_file_name.replace('.pkl', '_models.pkl')}")
+    if args.training_only:
+        exit(0)
 
     testing_device = torch.device('cpu')
     x_tr, y_tr, x_va, y_va, x_te, y_te = (
