@@ -821,36 +821,59 @@ class QRTNormalAdapterVanilla:
             self.opt.step()
         return loss.detach().unsqueeze(0)
 
-    def predict(self, cdf_in, conf_level=0.95, score_distr="z", recal_model=None, recal_type=None):
+    def predict(self, cdf_in, conf_level=0.95, score_distr="z", recal_model=None, recal_type=None, in_batch=True):
         # assert False, "predict shouldnt be called..."
-        x = cdf_in[:, :-1]
-        q = cdf_in[:, -1].clamp(1e-6, 1 - 1e-6)
-        with torch.no_grad():
-            dist = self._dist(x)
-            if recal_model is not None:
-                if recal_type == "torch":
-                    recal_model.to(q.device)
-                    q = recal_model(q.view(-1, 1)).flatten()
-                elif recal_type == "sklearn":
-                    q_np = q.detach().cpu().numpy().reshape(-1, 1)
-                    q = torch.from_numpy(recal_model.predict(q_np)).to(q.device).flatten()
-                else:
-                    raise ValueError("recal_type incorrect")
-            if self.x_cal is not None:
-                dist_cal = self._dist(self.x_cal)
-                z_cal = dist_cal.cdf(self.y_cal.squeeze(-1))
-                dist = RecalibratedDist(dist, SmoothEmpiricalCDF(z_cal, self.device), self.device)
-            yq = dist.icdf(q).view(-1, 1)
-        return yq
+        x_all = cdf_in[:, :-1]
+        q_all = cdf_in[:, -1].clamp(1e-6, 1 - 1e-6)
+        outputs = []
 
-    def predict_q(self, x, q_list=None, ens_pred_type="conf", recal_model=None, recal_type=None):
-        x = x.to(self.device)
+        batch_size = len(cdf_in) // NUM_PARTS
         with torch.no_grad():
-            # dist = self._dist(x)
+            for start in range(0, len(cdf_in), batch_size):
+                end = start + batch_size
+                x = x_all[start:end]
+                q = q_all[start:end]
+
+                dist = self._dist(x)
+
+                if recal_model is not None:
+                    if recal_type == "torch":
+                        recal_model.to(q.device)
+                        q = recal_model(q.view(-1, 1)).flatten()
+                    elif recal_type == "sklearn":
+                        q_np = q.detach().cpu().numpy().reshape(-1, 1)
+                        q = torch.from_numpy(recal_model.predict(q_np)).to(q.device).flatten()
+                    else:
+                        raise ValueError("recal_type incorrect")
+
+                if self.x_cal is not None:
+                    dist_cal = self._dist(self.x_cal)
+                    z_cal = dist_cal.cdf(self.y_cal.squeeze(-1))
+                    dist = RecalibratedDist(dist, SmoothEmpiricalCDF(z_cal, self.device), self.device)
+
+                yq = dist.icdf(q).view(-1, 1)
+                outputs.append(yq)
+
+        return torch.cat(outputs, dim=0)
+
+    def predict_q(
+        self,
+        x,
+        q_list=None,
+        ens_pred_type="conf",
+        recal_model=None,
+        recal_type=None,
+    ):
+        x = x.to(self.device)
+
+        with torch.no_grad():
+            # setup q_list
             if q_list is None:
                 q_list = torch.arange(0.01, 1.00, 0.01, device=x.device, dtype=x.dtype)
             else:
                 q_list = q_list.flatten().to(x.device, dtype=x.dtype)
+
+            # recalibrate q_list if needed
             if recal_model is not None:
                 if recal_type == "torch":
                     recal_model.to(q_list.device)
@@ -864,18 +887,35 @@ class QRTNormalAdapterVanilla:
                 q_in = q_list
 
             q_in = q_in.clamp(1e-6, 1 - 1e-6)
-            q_expanded = q_in.repeat(x.size(0)).view(-1, 1)
-            x_expanded = x.repeat_interleave(q_in.size(0), dim=0)
-            dist_expanded = self._dist(x_expanded)
+            num_q = q_in.size(0)
 
+            # precompute calibration dist once
+            recal_dist = None
             if self.x_cal is not None:
                 dist_cal = self._dist(self.x_cal)
                 z_cal = dist_cal.cdf(self.y_cal.squeeze(-1))
-                dist_expanded = RecalibratedDist(dist_expanded, SmoothEmpiricalCDF(z_cal, self.device), self.device)
-                # dist_expanded = TransformedDistribution(dist_expanded, transforms=[transform])
-            yq = dist_expanded.icdf(q_expanded.view(-1)).view(x.size(0), q_in.size(0))
-        return yq
-    
+                recal_dist = SmoothEmpiricalCDF(z_cal, self.device)
+
+            results = []
+
+            batch_size = len(x) // NUM_PARTS
+            for start in range(0, x.size(0), batch_size):
+                end = start + batch_size
+                x_batch = x[start:end]
+
+                # expand q for this batch only
+                q_expanded = q_in.repeat(x_batch.size(0)).view(-1, 1)
+                x_expanded = x_batch.repeat_interleave(num_q, dim=0)
+
+                dist_expanded = self._dist(x_expanded)
+                if recal_dist is not None:
+                    dist_expanded = RecalibratedDist(dist_expanded, recal_dist, self.device)
+
+                yq = dist_expanded.icdf(q_expanded.view(-1)).view(x_batch.size(0), num_q)
+                results.append(yq)
+
+            return torch.cat(results, dim=0)
+   
     def update_va_loss(
         self, loss_fn, x, y, q_list, batch_q, curr_ep, num_wait, args
     ):
