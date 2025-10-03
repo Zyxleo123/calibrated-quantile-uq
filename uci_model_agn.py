@@ -416,7 +416,7 @@ def create_data_split(x_al, y_al, seed):
     return x_tr, y_tr, x_val, y_val, x_te, y_te, y_al
 
 
-def main(from_main_py=False, args=None):
+def main(from_main_py=False, args=None, inference_only=False):
     if not from_main_py:
         parser = argparse.ArgumentParser()
         parser.add_argument('--dataset', type=str, default='')
@@ -565,70 +565,75 @@ def main(from_main_py=False, args=None):
                 pred_va = mean_model(x_va).cpu().numpy()
                 pred_te = mean_model(x_te).cpu().numpy()
 
-            if not all([os.path.exists('maqr/cdf_data/{}_{}_cdf_x_tr.pt'.format(dataset, seed)),
-                        os.path.exists('maqr/cdf_data/{}_{}_cdf_y_tr.pt'.format(dataset, seed)),
-                        os.path.exists('maqr/cdf_data/{}_{}_cdf_x_va.pt'.format(dataset, seed)),
-                        os.path.exists('maqr/cdf_data/{}_{}_cdf_y_va.pt'.format(dataset, seed))]):
-                """ merge train and val preds """
-                pred_tr_va = np.concatenate([pred_tr, pred_va], axis=0)
-                x_tr_va = np.concatenate([x_tr.cpu().numpy(), x_va.cpu().numpy()], axis=0)
-                y_tr_va = np.concatenate([y_tr.cpu().numpy(), y_va.cpu().numpy()], axis=0)
+            if not inference_only:
+                if not all([os.path.exists('maqr/cdf_data/{}_{}_cdf_x_tr.pt'.format(dataset, seed)),
+                            os.path.exists('maqr/cdf_data/{}_{}_cdf_y_tr.pt'.format(dataset, seed)),
+                            os.path.exists('maqr/cdf_data/{}_{}_cdf_x_va.pt'.format(dataset, seed)),
+                            os.path.exists('maqr/cdf_data/{}_{}_cdf_y_va.pt'.format(dataset, seed))]):
+                    """ merge train and val preds """
+                    pred_tr_va = np.concatenate([pred_tr, pred_va], axis=0)
+                    x_tr_va = np.concatenate([x_tr.cpu().numpy(), x_va.cpu().numpy()], axis=0)
+                    y_tr_va = np.concatenate([y_tr.cpu().numpy(), y_va.cpu().numpy()], axis=0)
 
-                """ get dist matrix """
-                dist_type = args.dist_type
-                kls = np.ones(x_tr.shape[1])
-                dist_mat = get_dist_matrix(x_arr=x_tr_va, type=dist_type,
-                                        kernel_length_scales=kls, num_in_bin=20)
+                    """ get dist matrix """
+                    dist_type = args.dist_type
+                    kls = np.ones(x_tr.shape[1])
+                    dist_mat = get_dist_matrix(x_arr=x_tr_va, type=dist_type,
+                                            kernel_length_scales=kls, num_in_bin=20)
 
-                """ set dist threshold """
-                num_in_bin = args.num_in_bin
-                if dist_type == 'euclidean':
-                    dist_thresh = np.mean(np.sort(dist_mat, axis=1)[:,num_in_bin])
-                elif dist_type == 'kernel':
-                    dist_thresh = np.mean(np.sort(dist_mat, axis=-1)[:,-1*(num_in_bin+1)])
-                #print('{} distance set to {:.4f}'.format(dist_type, dist_thresh))
+                    """ set dist threshold """
+                    num_in_bin = args.num_in_bin
+                    if dist_type == 'euclidean':
+                        dist_thresh = np.mean(np.sort(dist_mat, axis=1)[:,num_in_bin])
+                    elif dist_type == 'kernel':
+                        dist_thresh = np.mean(np.sort(dist_mat, axis=-1)[:,-1*(num_in_bin+1)])
+                    #print('{} distance set to {:.4f}'.format(dist_type, dist_thresh))
 
-                """ create hps Namespace """
-                hps = Namespace()
-                hps.dist_thresh = dist_thresh
-                hps.kernel_weight_thresh = dist_thresh
-                hps.prune_kernel_weights = True
-                hps.kernel_length_scales = kls
-                # if weighted_kdecdf
-                hps.num_cdf_query = 40
-                hps.resid_bandwidth = 0.1
+                    """ create hps Namespace """
+                    hps = Namespace()
+                    hps.dist_thresh = dist_thresh
+                    hps.kernel_weight_thresh = dist_thresh
+                    hps.prune_kernel_weights = True
+                    hps.kernel_length_scales = kls
+                    # if weighted_kdecdf
+                    hps.num_cdf_query = 40
+                    hps.resid_bandwidth = 0.1
 
-                """ create quantile model dataset """
-                e_train_domain, e_train_obs = \
-                    make_cdf_dataset(train_domain=x_tr_va, train_obs=y_tr_va,
-                                    mean_pred=pred_tr_va,
-                                    construct_method='kernel_wecdf', hps=hps,
-                                    tr_beg_idx=0, tr_end_idx=(num_tr+num_va))
+                    """ create quantile model dataset """
+                    e_train_domain, e_train_obs = \
+                        make_cdf_dataset(train_domain=x_tr_va, train_obs=y_tr_va,
+                                        mean_pred=pred_tr_va,
+                                        construct_method='kernel_wecdf', hps=hps,
+                                        tr_beg_idx=0, tr_end_idx=(num_tr+num_va))
 
-                #import pudb; pudb.set_trace()
-                cdf_x_tr, cdf_x_va, cdf_y_tr, cdf_y_va = train_test_split(
-                    e_train_domain, e_train_obs, test_size=0.2, random_state=seed)
+                    #import pudb; pudb.set_trace()
+                    cdf_x_tr, cdf_x_va, cdf_y_tr, cdf_y_va = train_test_split(
+                        e_train_domain, e_train_obs, test_size=0.2, random_state=seed)
 
-                cdf_x_tr_tensor = torch.Tensor(cdf_x_tr)
-                cdf_y_tr_tensor = torch.Tensor(cdf_y_tr)
-                cdf_x_va_tensor = torch.Tensor(cdf_x_va)
-                cdf_y_va_tensor = torch.Tensor(cdf_y_va)
+                    cdf_x_tr_tensor = torch.Tensor(cdf_x_tr)
+                    cdf_y_tr_tensor = torch.Tensor(cdf_y_tr)
+                    cdf_x_va_tensor = torch.Tensor(cdf_x_va)
+                    cdf_y_va_tensor = torch.Tensor(cdf_y_va)
 
-                # save these for reuse
-                os.makedirs('maqr/cdf_data', exist_ok=True)
-                torch.save(cdf_x_tr_tensor, 'maqr/cdf_data/{}_{}_cdf_x_tr.pt'.format(dataset, seed))
-                torch.save(cdf_y_tr_tensor, 'maqr/cdf_data/{}_{}_cdf_y_tr.pt'.format(dataset, seed))
-                torch.save(cdf_x_va_tensor, 'maqr/cdf_data/{}_{}_cdf_x_va.pt'.format(dataset, seed))
-                torch.save(cdf_y_va_tensor, 'maqr/cdf_data/{}_{}_cdf_y_va.pt'.format(dataset, seed))
+                    # save these for reuse
+                    os.makedirs('maqr/cdf_data', exist_ok=True)
+                    torch.save(cdf_x_tr_tensor, 'maqr/cdf_data/{}_{}_cdf_x_tr.pt'.format(dataset, seed))
+                    torch.save(cdf_y_tr_tensor, 'maqr/cdf_data/{}_{}_cdf_y_tr.pt'.format(dataset, seed))
+                    torch.save(cdf_x_va_tensor, 'maqr/cdf_data/{}_{}_cdf_x_va.pt'.format(dataset, seed))
+                    torch.save(cdf_y_va_tensor, 'maqr/cdf_data/{}_{}_cdf_y_va.pt'.format(dataset, seed))
+                else:
+                    cdf_x_tr_tensor = torch.load('maqr/cdf_data/{}_{}_cdf_x_tr.pt'.format(dataset, seed))
+                    cdf_y_tr_tensor = torch.load('maqr/cdf_data/{}_{}_cdf_y_tr.pt'.format(dataset, seed))
+                    cdf_x_va_tensor = torch.load('maqr/cdf_data/{}_{}_cdf_x_va.pt'.format(dataset, seed))
+                    cdf_y_va_tensor = torch.load('maqr/cdf_data/{}_{}_cdf_y_va.pt'.format(dataset, seed))
+
+                loader_cdf = DataLoader(TensorDataset(cdf_x_tr_tensor, cdf_y_tr_tensor),
+                                        shuffle=True,
+                                        batch_size=args.bs)
             else:
-                cdf_x_tr_tensor = torch.load('maqr/cdf_data/{}_{}_cdf_x_tr.pt'.format(dataset, seed))
-                cdf_y_tr_tensor = torch.load('maqr/cdf_data/{}_{}_cdf_y_tr.pt'.format(dataset, seed))
-                cdf_x_va_tensor = torch.load('maqr/cdf_data/{}_{}_cdf_x_va.pt'.format(dataset, seed))
-                cdf_y_va_tensor = torch.load('maqr/cdf_data/{}_{}_cdf_y_va.pt'.format(dataset, seed))
-
-            loader_cdf = DataLoader(TensorDataset(cdf_x_tr_tensor, cdf_y_tr_tensor),
-                                    shuffle=True,
-                                    batch_size=args.bs)
+                loader_cdf = None
+                cdf_x_va_tensor = None
+                cdf_y_va_tensor = None
 
             """ training quantile model """
             lr = args.lr
@@ -647,7 +652,7 @@ def main(from_main_py=False, args=None):
             # cdf_model = cdf_model.to(device)
             # cdf_optimizer = torch.optim.Adam(cdf_model.parameters(), lr=lr, weight_decay=wd)
             if from_main_py:
-                cdf_model = QModelEns(input_size=cdf_x_tr_tensor.shape[1],
+                cdf_model = QModelEns(input_size=x_tr.shape[1],
                                     output_size=1, hidden_size=args.hs,
                                     num_layers=args.nl,
                                     lr=args.lr, wd=args.wd,

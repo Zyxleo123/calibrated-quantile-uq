@@ -359,8 +359,8 @@ if __name__ == "__main__":
             "dropout": args.dropout,
             "activation": args.activation,
         }
-        model_ens, loader, cdf_x_va_tensor, cdf_y_va_tensor, pred_mean_va, pred_mean_te = maqr_main(
-            from_main_py=True, args=args
+        model_ens, _, _, _, pred_mean_va, pred_mean_te = maqr_main(
+            from_main_py=True, args=args, inference_only=True
         )
         
         # For MAQR, we need to center the targets for evaluation
@@ -392,6 +392,7 @@ if __name__ == "__main__":
         def __init__(self, nfeatures):
             super().__init__()
             self.net = None
+            self.enable_cache = True
         def forward(self, x):
             return self.net(x)
     __main__.VanillaModel = VanillaModel
@@ -402,8 +403,10 @@ if __name__ == "__main__":
     # with open(tqdm_out_path, 'a', buffering=1) as tqdm_out:
     import time
     i = 0
-    # replace tqdm.tqdm(models_controlled) with file-targeted tqdm
-    for controlled_model_ens in tqdm.tqdm(models_controlled, file=log_f):
+    # import utils.q_model_ens as q_model_ens
+    # q_model_ens.enable_cache = True
+    for controlled_model_ens in tqdm.tqdm(models_controlled):
+    # with torch.no_grad():
         current_metrics_tmp = {}
         current_metrics_tmp['model_controlled'] = controlled_model_ens
         controlled_model_ens.use_device(testing_device)
