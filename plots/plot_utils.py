@@ -4,7 +4,7 @@ import os
 import matplotlib.cm as cm
 
 RESULTS_BASE_DIR = os.path.join(os.environ.get('SCRATCH', '.'), "results")
-BASELINE_NAMES = ['batch_qr', 'batch_cal', 'batch_int', 'maqr', 'calipso', 'dheur']
+BASELINE_NAMES = ['batch_qr', 'batch_cal', 'batch_int', 'maqr', 'calipso', 'batch_QRT']
 HYPER_NAMES = ['nl-1_hs-32', 'nl-2_hs-64', 'nl-4_hs-128', 'nl-8_hs-256']
 SEEDS = ['_0', '_1', '_2', '_3', '_4']
 Y_METRICS = [
@@ -15,6 +15,7 @@ Y_METRICS = [
     'te_interval_controlled',
     'te_check_controlled',
     'te_bag_nll_controlled',
+    'te_va_ece_exceedance',
 ]
 TITLE_METRICS = {
     'te_sharp_score_controlled': 'Sharpness',
@@ -32,7 +33,7 @@ TITLE_METHODS = {
     'batch_int': 'Interval',
     'maqr': 'MAQR',
     'calipso': 'Calipso',
-    'dheur': 'QRT'
+    'batch_QRT': 'QRT'
 }
 PERFORMANCE_METRICS = ['IGD', 'IGD+', 'GD', 'GD+', 'HV']
 COLORS = ["blue", "red", "green", "brown", "purple", "gray"]
@@ -44,7 +45,7 @@ METHOD_MARKERS = {
     'batch_int': '^', # Triangle up
     'maqr': 'D',      # Diamond
     'calipso': 'X',   # X
-    'dheur': 'P',     # Plus
+    'batch_QRT': 'P',     # Plus
 }
 HYPER_MARKERS = {
     'nl-1_hs-32': 'o',   # Circle
