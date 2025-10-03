@@ -6,6 +6,7 @@ results
 *.pkl
 *.txt
 data/new_datasets_raw
+data/UCI_Datasets
 *.pt
 graphs/
 *.pdf
