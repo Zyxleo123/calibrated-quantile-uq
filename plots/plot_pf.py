@@ -24,6 +24,7 @@ from typing import List, Tuple, Dict
 
 def get_pf_for_hp_dir(hp_dir: Path, key_prefix: str) -> List[Tuple[float, float]]:
     all_pkls = hp_dir.glob('*.pkl')
+    all_pkls = [p for p in all_pkls if not p.name.endswith('_models.pkl')]
     all_data = [load_pickle(p) for p in all_pkls]
     all_points = []
     for data in all_data:
@@ -49,13 +50,15 @@ def plot_pareto_fronts(pf_by_hp: Dict[str, List[Tuple[float, float]]], dataset_n
             color=HYPER_COLORS[hp_config_name],
             markersize=8
         )
-    plt.xlabel('Test ECE')
-    plt.ylabel('Test Sharpness')
-    plt.title(f'Pareto Fronts - {dataset_name}{title_suffix}', fontsize=16)
-    plt.legend()
+    plt.xlabel('Test ECE', fontsize=20)
+    plt.ylabel('Test Sharpness', fontsize=20)
+    plt.xticks(fontsize=20)
+    plt.yticks(fontsize=20)
+    plt.title(f'Pareto Fronts - {dataset_name}{title_suffix}', fontsize=20)
+    plt.legend(fontsize=20)
     plt.grid()
     plt.tight_layout()
-    plt.savefig(save_dir / f'pareto_fronts{filename_suffix}.pdf')
+    plt.savefig(save_dir / f'pareto_fronts{filename_suffix}_{dataset_name}.pdf')
     plt.close()
 
 

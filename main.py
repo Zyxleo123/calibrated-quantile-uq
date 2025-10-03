@@ -301,6 +301,9 @@ if __name__ == "__main__":
     if os.path.exists(save_file_name) and args.skip_existing and not args.debug:
         print("skipping {}".format(save_file_name), flush=True)
         sys.exit()
+    if  os.path.exists(save_file_name.replace('.pkl', '_models.pkl')) and args.skip_existing and not args.debug:
+        print("skipping {}".format(save_file_name.replace('.pkl', '_models.pkl')), flush=True)
+        sys.exit()
 
     # Set seeds
     set_seeds(args.seed)
