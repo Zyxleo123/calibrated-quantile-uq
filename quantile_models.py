@@ -129,6 +129,7 @@ def check_loss(model, X, y, args): # all done
     return check_loss_score
 
 
+
 def crps_score(model, X, y, args): # all done
     """
     CRPS score integrated along range of CDF, not domain of CDF
@@ -207,6 +208,98 @@ def crps_score(model, X, y, args): # all done
         scores_list.append(curr_crps)
 
     loss = np.mean(scores_list)
+    return loss
+
+def crps_score(model, X, y, args): # all done
+    """
+    CRPS score integrated along range of CDF, not domain of CDF
+    :param model:
+    :param X: assuming tensor
+    :param y: assuming tensor
+    :param args: optional - num_p (assuming tensor)
+    :return:
+    """
+
+    # if not hasattr(args, 'num_p'):
+    #     # print('args does not have num_p for crps_score, replacing with default')
+    args.num_p = 100
+    resolution = 100
+
+    num_pts = y.size(0)
+    p_list = torch.linspace(0.01, 0.99, args.num_p)
+    num_q = p_list.size(0)
+    assert num_q == args.num_p
+    p_rep = p_list.view(-1, 1).repeat(1, num_pts).view(-1, 1).to(args.device)
+    y_stacked = y.repeat(num_q, 1)
+
+    # recalibrate if needed
+    if hasattr(args, 'recal_model') and args.recal_model is not None:
+        p_rep = recal_quantiles(args.recal_model, p_rep)
+
+    if X is None:
+        model_in = p_rep
+    else:
+        x_stacked = X.repeat(num_q, 1)
+        model_in = torch.cat([x_stacked, p_rep], dim=1)
+
+    with torch.no_grad():
+        pred_y = model.predict(model_in)
+    pred_y_mat = pred_y.reshape(num_q, num_pts).T
+
+    # p_list = p_list.numpy().flatten()
+    # scores_list = []
+    # for pt_idx in range(num_pts):
+    #     curr_y = float(y[pt_idx].item())
+    #     curr_q_preds = pred_y_mat[pt_idx].cpu().numpy().flatten()
+    #     min_q_pred, max_q_pred = np.min(curr_q_preds), np.max(curr_q_preds)
+
+    #     # #####
+    #     # curr_cdf = interp1d(curr_q_preds, p_list, kind='linear')
+    #     # sample_xs = np.linspace(min_q_pred, max_q_pred, resolution)
+    #     # sample_ys = curr_cdf(sample_xs)
+    #     #
+    #     # if curr_y < min_q_pred:
+    #     #     curr_crps = np.nanmean(np.square(1 - sample_ys))
+    #     # elif max_q_pred < curr_y:
+    #     #     curr_crps = np.nanmean(np.square(sample_ys))
+    #     # else:
+    #     #     assert (min_q_pred <= curr_y) and (curr_y <= max_q_pred)
+    #     #     below_idx = (sample_xs <= curr_y).astype(float)
+    #     #     above_idx = 1.0 - below_idx
+    #     #     crps_arr = ((np.square(sample_ys) * below_idx) +
+    #     #                 (np.square(1 - sample_ys) * above_idx))
+    #     #     curr_crps = np.nanmean(crps_arr)
+    #     # #####
+
+    #     ##### Non-inverted
+    #     if curr_y < min_q_pred:
+    #         curr_crps = np.mean(np.square(1 - p_list))
+    #     elif max_q_pred < curr_y:
+    #         curr_crps = np.mean(np.square(p_list))
+    #     else:
+    #         assert (np.min(curr_q_preds) <= curr_y) and \
+    #                (curr_y <= np.max(curr_q_preds))
+    #         below_idx = (curr_q_preds <= curr_y).astype(float)
+    #         above_idx = 1.0 - below_idx
+    #         curr_crps = np.mean((np.square(p_list) * below_idx) + (np.square(1 - p_list) * above_idx))
+    #     #####
+    #     if not np.isfinite(curr_crps):
+    #         raise ValueError("CRPS is not finite")
+    #     scores_list.append(curr_crps)
+
+    p_list = p_list.flatten().to(pred_y_mat.device)
+    min_q_pred, max_q_pred = torch.min(pred_y_mat, axis=1)[0], torch.max(pred_y_mat, axis=1)[0]
+    curr_crps = torch.zeros(num_pts).to(pred_y_mat.device)
+    curr_crps[y.flatten() < min_q_pred] = torch.mean(torch.square(1 - p_list))
+    curr_crps[y.flatten() > max_q_pred] = torch.mean(torch.square(p_list))
+    mask = torch.logical_and(y.flatten() >= min_q_pred, y.flatten() <= max_q_pred)
+    curr_crps[mask] = torch.mean(torch.square(p_list) * (pred_y_mat <= y)\
+        + torch.square(1 - p_list) * (pred_y_mat > y), dim=1)[mask]
+    if not torch.isfinite(curr_crps).all():
+        raise ValueError("CRPS is not finite")
+    # scores_list = curr_crps
+
+    loss = torch.mean(curr_crps).item()
     return loss
 
 
