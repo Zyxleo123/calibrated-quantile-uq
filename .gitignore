@@ -10,3 +10,7 @@ data/UCI_Datasets
 *.pt
 graphs/
 *.pdf
+results/
+reports/
+metric_log/
+log/

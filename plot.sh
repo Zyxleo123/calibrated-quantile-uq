@@ -1,12 +1,15 @@
+EXP_NAME=$1
+
 echo "Clearing metric_log/ before running experiments..."
-rm metric_log/*
+rm -r metric_log/$EXP_NAME
 
 echo "Computing metrics and plotting..."
-python plots/plot_seeds.py -n lump
-python plots/plot_seeds.py -n lump -r
+python -u plots/plot_seeds.py -n $EXP_NAME
+python -u plots/plot_seeds.py -n $EXP_NAME -r
 
 echo "Plotting Pareto fronts..."
-python plots/plot_pf.py -n lump
+python -u plots/plot_pf.py -n $EXP_NAME
 
 echo "Reporting mean and std error..."
-python plots/plot_mean.py -n lump
+python -u plots/plot_mean.py -n $EXP_NAME
+python -u plots/plot_mean.py -n $EXP_NAME -r
