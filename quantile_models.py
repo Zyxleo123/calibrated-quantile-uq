@@ -535,7 +535,9 @@ def get_obs_props(model, X, y, exp_props, device, type, in_batch=True,
 
     with torch.no_grad():
         if calipso:
-            batch_size = len(X) // NUM_PARTS
+            batch_size = max(len(X) // NUM_PARTS, 1) if in_batch else len(X)
+            if batch_size < 100:
+                batch_size = 100
             all_preds_list = []
             for i in tqdm.tqdm(range(0, X.size(0), batch_size)):
                 X_batch = X[i:i+batch_size]
@@ -709,16 +711,15 @@ def bag_nll(model, X, y, args): # working
         x_stacked = X.repeat(num_q, 1)
         model_in = torch.cat([x_stacked, q_rep], dim=1)
 
-    if args.loss == 'calipso':
-        batch_size = len(X) // NUM_PARTS
-        all_preds_list = []
-        for i in tqdm.tqdm(range(0, X.size(0), batch_size)):
-            X_batch = X[i:i+batch_size]
-            batch_preds = model.predict_q(X_batch, q_rep)
-            all_preds_list.append(batch_preds)
-        pred_y = torch.cat(all_preds_list, dim=0)
-    else:
-        pred_y = model.predict(model_in)
+    # if args.loss == 'calipso':
+    #     batch_size = max(len(x_stacked) // NUM_PARTS, 1000)
+    #     all_preds_list = []
+    #     for i in tqdm.tqdm(range(0, x_stacked.size(0), batch_size)):
+    #         batch_preds = model.predict(model_in[i:i+batch_size])
+    #         all_preds_list.append(batch_preds)
+    #     pred_y = torch.cat(all_preds_list, dim=0)
+    # else:
+    pred_y = model.predict(model_in)
 
     pred_y_mat = pred_y.reshape(num_q, num_pts).T
     nll_list = []

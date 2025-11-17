@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Categorical, MixtureSameFamily, Distribution, constraints, CumulativeDistributionTransform, TransformedDistribution, Uniform
 from pyro.distributions import Logistic
+import math
 
 import hashlib
 import time
@@ -239,6 +240,7 @@ class QModelEns(uq_model):
         layer_norm=False,
         dropout=0.0,
         activation="relu",
+        optimizer="adam",
     ):
 
         self.num_ens = num_ens
@@ -257,8 +259,16 @@ class QModelEns(uq_model):
             ).to(device)
             for _ in range(num_ens)
         ]
+        if optimizer == "adam":
+            Optimizer = torch.optim.Adam
+        elif optimizer == "sgd":
+            Optimizer = torch.optim.SGD
+        elif optimizer == "adamw":
+            Optimizer = torch.optim.AdamW
+        elif optimizer == "rmsprop":
+            Optimizer = torch.optim.RMSprop
         self.optimizers = [
-            torch.optim.Adam(x.parameters(), lr=lr, weight_decay=wd)
+            Optimizer(x.parameters(), lr=lr, weight_decay=wd)
             for x in self.model
         ]
         self.waiting = [True for _ in range(num_ens)]
@@ -459,6 +469,7 @@ class QModelEns(uq_model):
         ens_pred_type="conf",
         recal_model=None,
         recal_type=None,
+        in_batch=True,
     ):
         """
         Get output for given list of quantiles. (Vectorized Version)
@@ -499,7 +510,7 @@ class QModelEns(uq_model):
         cdf_in_batch = torch.cat([x_expanded, p_expanded], dim=1)
 
         with torch.no_grad():
-            num_parts = NUM_PARTS
+            num_parts = NUM_PARTS if in_batch else 1
             size_parts = len(cdf_in_batch) // num_parts
             # inference in parts to save memory
             for i in range(num_parts):
@@ -767,11 +778,11 @@ def _kde_refl_log_density(z, centers, b):
     return torch.where(mask, log_dens, torch.zeros_like(log_dens))
 
 
-class QRTNormalVanilla(nn.Module):
+class GaussianModel(nn.Module):
     """
     Single NNKit.vanilla_nn that outputs two values per x: (mean, rho).
     """
-    def __init__(self, input_size, hidden_size, num_layers):
+    def __init__(self, input_size, hidden_size, num_layers, residual=True):
         super().__init__()
         # One network with 2-dimensional output
         self.net = EnhancedMLP(
@@ -779,7 +790,7 @@ class QRTNormalVanilla(nn.Module):
             output_size=2,
             hidden_size=hidden_size,
             num_layers=num_layers,
-            residual=True
+            residual=residual,
         )
 
     def forward(self, x):
@@ -796,7 +807,7 @@ class QRTNormalVanilla(nn.Module):
 class QRTNormalAdapterVanilla:
     def __init__(self, input_size, hidden_size, num_layers, lr, wd, device, qrt_alpha=1.0, kde_b=0.1, x_cal=None, y_cal=None):
         self.device = device
-        self.model = QRTNormalVanilla(input_size, hidden_size, num_layers).to(device)
+        self.model = GaussianModel(input_size, hidden_size, num_layers).to(device)
         self.opt = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=wd)
         self.done_training = False
         self.keep_training = True
@@ -916,7 +927,7 @@ class QRTNormalAdapterVanilla:
 
             results = []
 
-            batch_size = len(x) // NUM_PARTS if in_batch else len(x)
+            batch_size = max(len(x) // NUM_PARTS, 1) if in_batch else len(x)
             for start in range(0, x.size(0), batch_size):
                 end = start + batch_size
                 x_batch = x[start:end]
@@ -977,6 +988,264 @@ class QRTNormalAdapterVanilla:
                 if curr_ep - self.best_va_ep > num_wait:
                     self.waiting = False
                     print(f"Early stopping at ep {curr_ep}")
+
+class mPAICModel:
+    def __init__(self, input_size, hidden_size, num_layers, lr, wd, device,
+        residual=True, batch_norm=False, layer_norm=False, dropout=0.0, activation="relu", alpha=0.1):
+        """
+        Implementation of the mPAIC model.
+        :param model: takes in (x, r) and outputs (mean, std), where r is uniform(0,1)
+        :param alpha: 0~1 loss weighting parameter
+        """
+        self.gaussian_model = GaussianModel(input_size + 1, hidden_size, num_layers, residual=residual)
+        self.gaussian_model = self.gaussian_model.to(device)
+        self.optimizer = torch.optim.AdamW(self.gaussian_model.parameters(), lr=lr, weight_decay=wd)
+        self.alpha = alpha 
+        self.best_va_model = None
+        self.best_va_loss = np.inf
+        self.waiting = True
+        self.best_va_ep = 0
+    
+    def use_device(self, device):
+        self.device = device
+        if self.best_va_model is not None:
+            self.best_va_model = self.best_va_model.to(device)
+        self.gaussian_model = self.gaussian_model.to(device)
+    
+    def _calculate_loss_paic_torch(self, x, y, q_list):
+        """
+        Calculate the PAIC part of the loss.
+        """
+        x_expanded = x.repeat_interleave(len(q_list), dim=0)
+        q_expanded = q_list.repeat(x.shape[0]).view(-1, 1)
+        xq = torch.cat([x_expanded, q_expanded], dim=1)
+        means, stds = self.gaussian_model(xq)
+        dists = torch.distributions.Normal(means, stds)
+
+        y_expanded = y.repeat_interleave(len(q_list), dim=0).squeeze(-1)
+        pits = dists.cdf(y_expanded)
+        diffs = (pits - q_expanded.view(-1)).abs()
+        return diffs.mean()
+    
+    def _calculate_loss_nll_torch(self, x, y, q_list):
+        """
+        Calculate the NLL part of the loss.
+        """
+        x_expanded = x.repeat_interleave(len(q_list), dim=0)
+        q_expanded = q_list.repeat(x.shape[0]).view(-1, 1)
+        xq = torch.cat([x_expanded, q_expanded], dim=1)
+        means, stds = self.gaussian_model(xq)
+        dists = torch.distributions.Normal(means, stds)
+
+        y_expanded = y.repeat_interleave(len(q_list), dim=0).squeeze(-1)
+        nll = -dists.log_prob(y_expanded)
+        return nll.mean() 
+
+    def _calculate_loss_paic(self, x, y, q_list):
+        """
+        Calculate the PAIC part of the loss using manual math.
+        """
+        x_expanded = x.repeat_interleave(len(q_list), dim=0)
+        q_expanded = q_list.repeat(x.shape[0]).view(-1, 1)
+        xq = torch.cat([x_expanded, q_expanded], dim=1)
+        means, stds = self.gaussian_model(xq)
+
+        y_expanded = y.repeat_interleave(len(q_list), dim=0)
+
+        # CDF(y) = 0.5 * (1 + erf((y - mu) / (sigma * sqrt(2))))
+        z = (y_expanded - means) / (stds * math.sqrt(2.0))
+        pits = 0.5 * (1.0 + torch.erf(z)).clamp(1e-6, 1 - 1e-6)
+        
+        diffs = (pits - q_expanded).abs()
+        return diffs.mean()
+
+    def _calculate_loss_nll(self, x, y, q_list):
+        """
+        Calculate the NLL part of the loss using manual math.
+        """
+        x_expanded = x.repeat_interleave(len(q_list), dim=0)
+        q_expanded = q_list.repeat(x.shape[0]).view(-1, 1)
+        xq = torch.cat([x_expanded, q_expanded], dim=1)
+        means, stds = self.gaussian_model(xq)
+
+        y_expanded = y.repeat_interleave(len(q_list), dim=0)
+
+        # NLL = -log(PDF(y)) = log(sigma) + 0.5*log(2*pi) + 0.5*((y - mu)/sigma)^2
+        term1 = torch.log(stds)
+        term2 = math.log(2 * math.pi) / 2.0
+        term3 = ((y_expanded - means) / stds) ** 2 / 2.0
+        nll = term1 + term2 + term3
+
+        return nll.mean()
+
+    # def loss(self, loss_fn, x, y, q_list, batch_q, take_step, args):
+    #     """
+    #     Calculate the combined loss.
+    #     """
+    #     paic_loss = self._calculate_loss_paic(x, y, q_list)
+    #     nll_loss = self._calculate_loss_nll(x, y, q_list)
+    #     loss = (1.0 - self.alpha) * paic_loss + (self.alpha * nll_loss)
+    #     if take_step:
+    #         self.optimizer.zero_grad(set_to_none=True)
+    #         loss.backward()
+    #         self.optimizer.step()
+    #     return loss
+
+    def loss(self, loss_fn, x, y, q_list, batch_q, take_step, args):
+        """
+        Calculate the combined loss.
+        """
+        paic_loss = self._calculate_loss_paic_torch(x, y, q_list)
+        nll_loss = self._calculate_loss_nll_torch(x, y, q_list)
+        loss = (1.0 - self.alpha) * paic_loss + (self.alpha * nll_loss)
+        if take_step:
+            self.optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            self.optimizer.step()
+        return loss
+
+    def predict(self, cdf_in, conf_level=0.95, score_distr="z", recal_model=None, recal_type=None, in_batch=True):
+        """
+        Predict the y's given the x and quantile levels (last column of cdf_in).
+        First, predict h(x, q) = GaussianModel(x, q).
+        Then, find the q'th quantile of the Gaussian distribution.
+        """
+        x_all = cdf_in[:, :-1]
+        q_all = cdf_in[:, -1].clamp(1e-6, 1 - 1e-6)
+        outputs = []
+
+        if recal_model is not None:
+            if recal_type == "torch":
+                recal_model.to(q_all.device)
+                with torch.no_grad():
+                    q_all = recal_model(q_all.view(-1, 1)).flatten()
+            elif recal_type == "sklearn":
+                q_np = q_all.detach().cpu().numpy().reshape(-1, 1)
+                q_all = torch.from_numpy(recal_model.predict(q_np)).to(q_all.device).flatten()
+            else:
+                raise ValueError("recal_type incorrect")
+
+        batch_size = max(len(cdf_in) // NUM_PARTS, 1) if in_batch else len(cdf_in)
+        with torch.no_grad():
+            for start in range(0, len(cdf_in), batch_size):
+                end = start + batch_size
+                x = x_all[start:end]
+                q = q_all[start:end]
+                # uniformly sample num_q quantiles for each x and average
+                num_r = 10
+                r = torch.linspace(0.01, 0.99, num_r, device=x.device).repeat(x.size(0)).view(-1)
+                
+                x_expanded = x.repeat_interleave(num_r, dim=0)
+                q_expanded = q.repeat_interleave(num_r, dim=0)
+
+                xr = torch.cat([x_expanded, r.view(-1, 1)], dim=1)
+                means, stds = self.gaussian_model(xr)
+                dists = torch.distributions.Normal(means, stds)
+
+                yq = dists.icdf(q_expanded).view(x.size(0), num_r).mean(dim=1, keepdim=True)
+
+                outputs.append(yq.detach())
+
+        return torch.cat(outputs, dim=0)
+
+    def predict_q(self, x, q_list=None, ens_pred_type="conf", recal_model=None, recal_type=None, in_batch=True):
+        """
+        Predict the y's given the x and quantile levels (q_list).
+        First, predict h(x, q) = GaussianModel(x, q).
+        Then, find the q'th quantile of the Gaussian distribution.
+        """
+        x = x.to(next(self.gaussian_model.parameters()).device)
+
+        with torch.no_grad():
+            # setup q_list
+            if q_list is None:
+                q_list = torch.arange(0.01, 1.00, 0.01, device=x.device, dtype=x.dtype)
+            else:
+                q_list = q_list.flatten().to(x.device, dtype=x.dtype)
+
+            # recalibrate q_list if needed
+            if recal_model is not None:
+                if recal_type == "torch":
+                    recal_model.to(q_list.device)
+                    q_in = recal_model(q_list.view(-1, 1)).flatten()
+                elif recal_type == "sklearn":
+                    q_np = q_list.detach().cpu().numpy().reshape(-1, 1)
+                    q_in = torch.from_numpy(recal_model.predict(q_np)).to(x.device).flatten().to(x.dtype)
+                else:
+                    raise ValueError("recal_type incorrect")
+            else:
+                q_in = q_list
+
+            q_in = q_in.clamp(1e-6, 1 - 1e-6)
+            num_q = q_in.size(0)
+
+            results = []
+
+            batch_size = max(len(x) // NUM_PARTS, 1) if in_batch else len(x)
+            for start in range(0, x.size(0), batch_size):
+                end = start + batch_size
+                x_batch = x[start:end]
+
+                q_expanded = q_in.repeat(x_batch.size(0)).view(-1, 1)
+                x_expanded = x_batch.repeat_interleave(num_q, dim=0)
+                
+
+                num_r = 10
+                r = torch.linspace(0.01, 0.99, num_r, device=x_batch.device).repeat(x_expanded.size(0)).view(-1)
+                x_expanded = x_expanded.repeat_interleave(num_r, dim=0)
+                q_expanded = q_expanded.repeat_interleave(num_r, dim=0)
+
+                xr_expanded = torch.cat([x_expanded, r.view(-1, 1)], dim=1)
+                means, stds = self.gaussian_model(xr_expanded)
+                dists = torch.distributions.Normal(means, stds)
+
+                yq = dists.icdf(q_expanded.view(-1))
+                yq = yq.view(x_batch.size(0), num_q, num_r).mean(dim=2)
+                results.append(yq.detach())
+
+            return torch.cat(results, dim=0)
+    
+    def update_va_loss(self, loss_fn, x, y, q_list, batch_q, curr_ep, num_wait, args):
+        if self.waiting:
+            with torch.no_grad():
+                num_parts = 20
+                size_parts = len(x) // num_parts
+                loss_parts = []
+                for i in range(num_parts):
+                    if i != num_parts - 1:
+                        loss_part = self.loss(
+                            loss_fn,
+                            x[i * size_parts : (i + 1) * size_parts],
+                            y[i * size_parts : (i + 1) * size_parts],
+                            q_list,
+                            batch_q,
+                            take_step=False,
+                            args=args,
+                        )
+                    else:
+                        loss_part = self.loss(
+                            loss_fn,
+                            x[i * size_parts :],
+                            y[i * size_parts :],
+                            q_list,
+                            batch_q,
+                            take_step=False,
+                            args=args,
+                        )
+                    loss_parts.append(loss_part.detach())
+                va_loss = torch.mean(torch.stack(loss_parts), dim=0).cpu().numpy()
+
+            if va_loss < self.best_va_loss:
+                self.best_va_loss = va_loss
+                self.best_va_ep = curr_ep
+                self.best_va_model = deepcopy(self.gaussian_model)
+            else:
+                if curr_ep - self.best_va_ep > num_wait:
+                    self.waiting = False
+                    print(f"Early stopping at ep {curr_ep}")
+            return va_loss
+        return None
+
 
 if __name__ == "__main__":
     temp_model = QModelEns(

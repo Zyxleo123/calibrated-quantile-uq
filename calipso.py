@@ -534,12 +534,14 @@ class quantile_model_ensemble(nn.Module):
             out = torch.empty((x.shape[0], 1), device=self.output_device, dtype=x.dtype)
 
             batch_size = len(x) // NUM_PARTS
+            if batch_size < 100:
+                batch_size = 100
             n = x.shape[0]
             if in_batch:
                 preds = torch.empty((n, unique_p.shape[0]), device=self.output_device, dtype=x.dtype)
 
                 # Predict x in batches for all unique_p at once
-                for start in tqdm(range(0, n, batch_size)):
+                for start in range(0, n, batch_size):
                     end = min(start + batch_size, n)
                     x_batch = x[start:end]
                     preds_batch = self.get_quantiles(x_batch, unique_p)
@@ -553,7 +555,7 @@ class quantile_model_ensemble(nn.Module):
                 out[rows] = preds_group.reshape(-1, 1)
         return out
 
-    def predict_q(self, x, q_list=None, ens_pred_type="conf", recal_model=None, recal_type=None):
+    def predict_q(self, x, q_list=None, ens_pred_type="conf", recal_model=None, recal_type=None, in_batch=True):
         # x: (num_x, dim_x). q_list: flat tensor of quantile levels
         with torch.no_grad():
             if not torch.is_tensor(x):
@@ -584,8 +586,8 @@ class quantile_model_ensemble(nn.Module):
 
             # For calipso, ens_pred_type/recal_* are not used; get calibrated quantiles directly
 
-            batch_size = 256
             n = x.shape[0]
+            batch_size = 256 if in_batch else n
             preds = torch.empty((n, in_q_list.shape[0]), device=self.output_device, dtype=x.dtype)
 
             # Predict x in batches for all unique_p at once
