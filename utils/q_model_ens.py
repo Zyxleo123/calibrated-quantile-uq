@@ -239,6 +239,7 @@ class QModelEns(uq_model):
         layer_norm=False,
         dropout=0.0,
         activation="relu",
+        monotone_quantiles=False
     ):
 
         self.num_ens = num_ens
@@ -265,6 +266,7 @@ class QModelEns(uq_model):
         self.best_va_loss = [np.inf for _ in range(num_ens)]
         self.best_va_model = [None for _ in range(num_ens)]
         self.best_va_ep = [0 for _ in range(num_ens)]
+        self.monotone_quantiles = monotone_quantiles
 
     def use_device(self, device):
         self.device = device
@@ -448,6 +450,12 @@ class QModelEns(uq_model):
             )
             pred = pred.to(cdf_in.device)
 
+        if self.monotone_quantiles:
+            print("Monotone quantiles not implemented for functions calling QModelEns.predict.")
+            print("If needed, it might need to be implemented per call.")
+            if (cdf_in[:, -1] == cdf_in[0, -1]).all():
+                print("All same quantile, monotone quantiles not needed.")
+
         return pred
 
     #####
@@ -471,47 +479,59 @@ class QModelEns(uq_model):
         :return:
         """
         num_x = x.shape[0]
+        monotone_quantiles = self.monotone_quantiles
+        self.monotone_quantiles = False
         
-        if q_list is None:
-            # Ensure q_list is on the correct device from the start
-            q_list = torch.arange(0.01, 1.00, 0.01, device=self.device, dtype=x.dtype)
-        else:
-            q_list = q_list.flatten().to(self.device, dtype=x.dtype)
-        
-        num_q = q_list.shape[0]
-
-        if recal_model is not None:
-            if recal_type == "torch":
-                recal_model.to(q_list.device)
-                with torch.no_grad():
-                    in_q_list = recal_model(q_list.view(-1, 1)).flatten()
-            elif recal_type == "sklearn":
-                q_numpy = q_list.cpu().numpy().reshape(-1, 1)
-                in_q_numpy = recal_model.predict(q_numpy)
-                in_q_list = torch.from_numpy(in_q_numpy).to(self.device).flatten().to(x.dtype)
+        try:
+            if q_list is None:
+                # Ensure q_list is on the correct device from the start
+                q_list = torch.arange(0.01, 1.00, 0.01, device=self.device, dtype=x.dtype)
             else:
-                raise ValueError("recal_type incorrect")
-        else:
-            in_q_list = q_list
+                q_list = q_list.flatten().to(self.device, dtype=x.dtype)
+            
+            num_q = q_list.shape[0]
 
-        x_expanded = x.repeat_interleave(num_q, dim=0)
-        p_expanded = in_q_list.repeat(num_x).view(-1, 1)
-        cdf_in_batch = torch.cat([x_expanded, p_expanded], dim=1)
-
-        with torch.no_grad():
-            num_parts = NUM_PARTS
-            size_parts = len(cdf_in_batch) // num_parts
-            # inference in parts to save memory
-            for i in range(num_parts):
-                if i == 0:
-                    all_preds = self.predict(cdf_in_batch[i*size_parts:(i+1)*size_parts], in_batch=False)
-                elif i == num_parts - 1:
-                    part_preds = self.predict(cdf_in_batch[i*size_parts:])
-                    all_preds = torch.cat([all_preds, part_preds], dim=0)
+            if recal_model is not None:
+                if recal_type == "torch":
+                    recal_model.to(q_list.device)
+                    with torch.no_grad():
+                        in_q_list = recal_model(q_list.view(-1, 1)).flatten()
+                elif recal_type == "sklearn":
+                    q_numpy = q_list.cpu().numpy().reshape(-1, 1)
+                    in_q_numpy = recal_model.predict(q_numpy)
+                    in_q_list = torch.from_numpy(in_q_numpy).to(self.device).flatten().to(x.dtype)
                 else:
-                    part_preds = self.predict(cdf_in_batch[i*size_parts:(i+1)*size_parts], in_batch=False)
-                    all_preds = torch.cat([all_preds, part_preds], dim=0)
-        pred_mat = all_preds.view(num_x, num_q)
+                    raise ValueError("recal_type incorrect")
+            else:
+                in_q_list = q_list
+
+            x_expanded = x.repeat_interleave(num_q, dim=0)
+            p_expanded = in_q_list.repeat(num_x).view(-1, 1)
+            cdf_in_batch = torch.cat([x_expanded, p_expanded], dim=1)
+
+            with torch.no_grad():
+                num_parts = NUM_PARTS
+                size_parts = len(cdf_in_batch) // num_parts
+                # inference in parts to save memory
+                for i in range(num_parts):
+                    if i == 0:
+                        all_preds = self.predict(cdf_in_batch[i*size_parts:(i+1)*size_parts], in_batch=False)
+                    elif i == num_parts - 1:
+                        part_preds = self.predict(cdf_in_batch[i*size_parts:])
+                        all_preds = torch.cat([all_preds, part_preds], dim=0)
+                    else:
+                        part_preds = self.predict(cdf_in_batch[i*size_parts:(i+1)*size_parts], in_batch=False)
+                        all_preds = torch.cat([all_preds, part_preds], dim=0)
+            pred_mat = all_preds.view(num_x, num_q)
+        finally:
+            self.monotone_quantiles = monotone_quantiles
+
+        if self.monotone_quantiles:
+            sorted_quantile_preds, _ = torch.sort(pred_mat, dim=-1)
+            q_level_sort_indices = torch.argsort(q_list)
+            q_level_rank_indices = torch.empty_like(q_level_sort_indices)
+            q_level_rank_indices[q_level_sort_indices] = torch.arange(q_list.shape[0], device=pred_mat.device)
+            pred_mat = torch.gather(sorted_quantile_preds, -1, q_level_rank_indices.expand_as(pred_mat))
 
         assert pred_mat.shape == (num_x, num_q)
         return pred_mat
@@ -794,7 +814,7 @@ class QRTNormalVanilla(nn.Module):
 
 
 class QRTNormalAdapterVanilla:
-    def __init__(self, input_size, hidden_size, num_layers, lr, wd, device, qrt_alpha=1.0, kde_b=0.1, x_cal=None, y_cal=None):
+    def __init__(self, input_size, hidden_size, num_layers, lr, wd, device, qrt_alpha=1.0, kde_b=0.1, x_cal=None, y_cal=None, monotone_quantiles=False):
         self.device = device
         self.model = QRTNormalVanilla(input_size, hidden_size, num_layers).to(device)
         self.opt = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=wd)
@@ -806,6 +826,7 @@ class QRTNormalAdapterVanilla:
         self.best_va_ep = 0
         self.qrt_alpha = float(qrt_alpha)
         self.kde_b = float(kde_b)
+        self.monotone_quantiles = monotone_quantiles
         if x_cal is not None:
             self.x_cal = x_cal.to(device)
             self.y_cal = y_cal.to(device)
@@ -871,6 +892,10 @@ class QRTNormalAdapterVanilla:
                 yq = dist.icdf(q).view(-1, 1)
                 outputs.append(yq)
 
+        if self.monotone_quantiles:
+            print("Monotone quantiles not implemented for functions calling QRTNormalAdapterVanilla.predict.")
+            print("If needed, it might need to be implemented per call.")
+
         return torch.cat(outputs, dim=0)
 
     def predict_q(
@@ -931,7 +956,16 @@ class QRTNormalAdapterVanilla:
                 yq = dist_expanded.icdf(q_expanded.view(-1)).view(x_batch.size(0), num_q)
                 results.append(yq)
 
-            return torch.cat(results, dim=0)
+            results = torch.cat(results, dim=0)
+
+            if self.monotone_quantiles:
+                sorted_quantile_preds, _ = torch.sort(results, dim=-1)
+                q_level_sort_indices = torch.argsort(q_list)
+                q_level_rank_indices = torch.empty_like(q_level_sort_indices)
+                q_level_rank_indices[q_level_sort_indices] = torch.arange(q_list.shape[0], device=results.device)
+                results = torch.gather(sorted_quantile_preds, -1, q_level_rank_indices.expand_as(results))
+
+            return results
    
     def update_va_loss(
         self, loss_fn, x, y, q_list, batch_q, curr_ep, num_wait, args

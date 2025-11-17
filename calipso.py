@@ -213,7 +213,7 @@ class quantile_model(nn.Module):
 
 ## SPECIFY CALIBRATED QUANTILE MODEL ENSEMBLE
 class quantile_model_ensemble(nn.Module):
-    def __init__(self, X, Y, vanilla_model, half_q_levels: Union[int, torch.Tensor], output_device, vanilla_weights = None, avg_weights=False):
+    def __init__(self, X, Y, vanilla_model, half_q_levels: Union[int, torch.Tensor], output_device, vanilla_weights = None, avg_weights=False, monotone_quantiles=False):
         super().__init__()
         self.done_training = False
         self.output_device = output_device
@@ -224,6 +224,7 @@ class quantile_model_ensemble(nn.Module):
         self.iso_reg = None
         self.printname = 'quantile_model'
         self.printcolor = 'C0'
+        self.monotone_quantiles = monotone_quantiles
 
         ## check if number of quantile levels is divisible by two
         if isinstance(half_q_levels, int):
@@ -354,7 +355,7 @@ class quantile_model_ensemble(nn.Module):
 
     def get_quantiles(self, X, q_levels):
         if self.iso_reg is None:
-            return self(X, q_levels)
+            out = self(X, q_levels)
         else:
             length_data = self.X.shape[0]
             quantile_linspace = torch.linspace(1/(length_data+1), length_data/(length_data+1), length_data)
@@ -364,8 +365,15 @@ class quantile_model_ensemble(nn.Module):
             recalibrated_quantile_vals = torch.tensor(recalibrated_quantile_vals).to(self.output_device)
             if not torch.is_tensor(q_levels):
                 q_levels = torch.tensor(q_levels)
-            return interp1d(recalibrated_quantile_vals.repeat(X.shape[0], 1), uncalibrated_quantiles,
+            out = interp1d(recalibrated_quantile_vals.repeat(X.shape[0], 1), uncalibrated_quantiles,
                                             q_levels.to(self.output_device)).to(self.output_device)
+        if self.monotone_quantiles:
+            sorted_quantile_preds, _ = torch.sort(out, dim=-1)
+            q_level_sort_indices = torch.argsort(q_levels)
+            q_level_rank_indices = torch.empty_like(q_level_sort_indices)
+            q_level_rank_indices[q_level_sort_indices] = torch.arange(q_levels.shape[0], device=out.device)
+            out = torch.gather(sorted_quantile_preds, -1, q_level_rank_indices.expand_as(out))
+        return out
 
 
     def recalibrate(self, val=None):

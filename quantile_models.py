@@ -535,7 +535,7 @@ def get_obs_props(model, X, y, exp_props, device, type, in_batch=True,
 
     with torch.no_grad():
         if calipso:
-            batch_size = len(X) // NUM_PARTS
+            batch_size = max(len(X) // NUM_PARTS, 1)
             all_preds_list = []
             for i in tqdm.tqdm(range(0, X.size(0), batch_size)):
                 X_batch = X[i:i+batch_size]

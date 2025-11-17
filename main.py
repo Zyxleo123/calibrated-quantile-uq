@@ -186,6 +186,14 @@ def parse_args():
     parser.add_argument(
         "--recal", type=int, default=1, help="1 to recalibrate after training"
     )
+
+    parser.add_argument(
+        "--monotone_quantiles",
+        action="store_true",
+        default=False,
+        help="Force output quantiles to be monotonic"
+    )
+
     parser.add_argument(
         "--save_dir",
         type=str,
@@ -375,6 +383,7 @@ if __name__ == "__main__":
         model_ens, loader, cdf_x_va_tensor, cdf_y_va_tensor, pred_mean_va, pred_mean_te = maqr_main(
             from_main_py=True, args=args
         )
+        # model_ens.monotone_quantiles = args.monotone_quantiles #If needed during training
         
         # For MAQR, we need to center the targets for evaluation
         y_va_centered = y_va - torch.from_numpy(pred_mean_va).to(y_va.device)
@@ -401,6 +410,7 @@ if __name__ == "__main__":
         # x_tr = x_tr[:int(x_tr.shape[0]*0.9)]
         # y_tr = y_tr[:int(y_tr.shape[0]*0.9)]
         model_ens, loader = calipso_main(args.data, args.seed, x_tr, y_tr, x_va, y_va, args.device, VanillaModel)
+        # model_ens.monotone_quantiles = args.monotone_quantiles #If needed during training
     else:
         # y_va_centered = None
         # y_te_centered = None
@@ -415,7 +425,8 @@ if __name__ == "__main__":
                 num_layers=args.nl,
                 lr=args.lr,
                 wd=args.wd,
-                device=args.device
+                device=args.device,
+                # monotone_quantiles=args.monotone_quantiles, #If needed during training
             )
         elif args.loss == "batch_QRTC":
             model_ens = QRTNormalAdapterVanilla(
@@ -426,7 +437,8 @@ if __name__ == "__main__":
                 wd=args.wd,
                 device=args.device, 
                 x_cal=x_cal, 
-                y_cal=y_cal
+                y_cal=y_cal,
+                # monotone_quantiles=args.monotone_quantiles, #If needed during training
             )
         else:
             model_ens = QModelEns(
@@ -443,6 +455,7 @@ if __name__ == "__main__":
                 layer_norm=args.layer_norm,
                 dropout=args.dropout,
                 activation=args.activation,
+                # monotone_quantiles=args.monotone_quantiles #If needed during training
             )
 
         # Data loader
@@ -691,6 +704,7 @@ if __name__ == "__main__":
     )
 
     # Test UQ on test
+    model_ens.monotone_quantiles = args.monotone_quantiles #Enable only for test evaluation
     te_exp_props = torch.linspace(0.01, 0.99, 99, device=testing_device)
     te_sharp_score, te_obs_props = test_uq(
         model_ens,
