@@ -20,7 +20,7 @@ from utils.misc_utils import (
     compute_marginal_sharpness
 )
 from recal import iso_recal
-from utils.q_model_ens import QModelEns, EnhancedMLP
+from utils.q_model_ens import QModelEns, EnhancedMLP, QRTNormalAdapterVanilla, mPAICModel
 from losses import (
     cali_loss,
     batch_cali_loss,
@@ -309,16 +309,19 @@ if __name__ == "__main__":
     set_seeds(args.seed)
 
     # --- NEW: redirect prints and tqdm to a logfile under ./<data>/<basename_of_savefile>.log ---
-    log_dir = os.path.join("log", args.data)
-    os.makedirs(log_dir, exist_ok=True)
-    log_basename = os.path.basename(save_file_name).replace(".pkl", ".log")
-    log_path = os.path.join(log_dir, log_basename)
-    # open in append mode with line buffering
-    log_f = open(log_path, "a", buffering=1)
-    old_stdout = sys.stdout
-    old_stderr = sys.stderr
-    sys.stdout = log_f
-    sys.stderr = log_f
+    if not args.debug:
+        log_dir = os.path.join("log", args.data, args.loss)
+        os.makedirs(log_dir, exist_ok=True)
+        log_basename = os.path.basename(save_file_name).replace(".pkl", ".log")
+        log_path = os.path.join(log_dir, log_basename)
+        # open in append mode with line buffering
+        with open(log_path, "w") as log_f:
+            pass
+        log_f = open(log_path, "a", buffering=1)
+        old_stdout = sys.stdout
+        old_stderr = sys.stderr
+        sys.stdout = log_f
+        sys.stderr = log_f
 
     # Fetching data
     data_args = Namespace(
@@ -399,14 +402,19 @@ if __name__ == "__main__":
     __main__.EnhancedMLP = EnhancedMLP
     __main__.QModelEns = QModelEns
 
-    models_controlled = pickle.load(open(args.models_path, 'rb'))
-    # with open(tqdm_out_path, 'a', buffering=1) as tqdm_out:
-    import time
     i = 0
-    # import utils.q_model_ens as q_model_ens
-    # q_model_ens.enable_cache = True
+    obj = pickle.load(open(args.models_path, 'rb'))
+    models_controlled = obj['models']
+    final_model = obj['final_model']
+    if hasattr(final_model, 'best_va_model'):
+        if args.loss in ['mpaic', 'batch_QRT']:
+            final_model.gaussian_model = final_model.best_va_model
+            best_va_model = final_model
+        else:
+            final_model.model = final_model.best_va_model
+            best_va_model = final_model
+        models_controlled.insert(0, best_va_model)
     for controlled_model_ens in tqdm.tqdm(models_controlled):
-    # with torch.no_grad():
         current_metrics_tmp = {}
         current_metrics_tmp['model_controlled'] = controlled_model_ens
         controlled_model_ens.use_device(testing_device)
@@ -452,14 +460,14 @@ if __name__ == "__main__":
 
         # Other scoring rules on test
         args_for_score = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99), alpha_list=torch.linspace(0.01, 0.20, 20), loss=args.loss)
-        # start_time = time.time()
-        # print("start bag_nll test time")
-        # try:
-        #     current_metrics_tmp['te_bag_nll_controlled'] = float(bag_nll(controlled_model_ens, x_te, y_te, args_for_score))
-        # except Exception as e:
-        #     current_metrics_tmp['te_bag_nll_controlled'] = float('nan')
-        #     raise e
-        # print(f"bag_nll test time: {time.time() - start_time:.2f} seconds")
+        start_time = time.time()
+        print("start bag_nll test time")
+        try:
+            current_metrics_tmp['te_bag_nll_controlled'] = float(bag_nll(controlled_model_ens, x_te, y_te, args_for_score))
+        except Exception as e:
+            current_metrics_tmp['te_bag_nll_controlled'] = float('nan')
+            raise e
+        print(f"bag_nll test time: {time.time() - start_time:.2f} seconds")
         start_time = time.time()
         print("start crps_score test time")
         try:
@@ -533,14 +541,14 @@ if __name__ == "__main__":
             # Other scoring rules
             args_for_score = Namespace(device=testing_device, q_list=torch.linspace(0.01, 0.99, 99), alpha_list=torch.linspace(0.01, 0.20, 20), recal_model=recal_model_controlled_tmp, recal_type="sklearn", loss=args.loss)
             
-            # start_time = time.time()
-            # print("start recal bag_nll")
-            # try:
-            #     current_metrics_tmp['recal_te_bag_nll_controlled'] = float(bag_nll(controlled_model_ens, x_te, y_te, args_for_score))
-            # except Exception as e:
-            #     current_metrics_tmp['recal_te_bag_nll_controlled'] = float('nan')
-            #     raise e
-            # print(f"recal bag_nll time: {time.time() - start_time:.2f} seconds")
+            start_time = time.time()
+            print("start recal bag_nll")
+            try:
+                current_metrics_tmp['recal_te_bag_nll_controlled'] = float(bag_nll(controlled_model_ens, x_te, y_te, args_for_score))
+            except Exception as e:
+                current_metrics_tmp['recal_te_bag_nll_controlled'] = float('nan')
+                raise e
+            print(f"recal bag_nll time: {time.time() - start_time:.2f} seconds")
             start_time = time.time()
             print("start recal crps_score")
             try:
@@ -583,15 +591,19 @@ if __name__ == "__main__":
             print(f"recal mean_variance time: {time.time() - start_time:.2f} seconds")
         metrics_controlled.append(current_metrics_tmp)
         i += 1
-    # Compute marginal sharpness of the target variable
-    # va_marginal_sharpness = compute_marginal_sharpness(y_va, y_range)
-    # te_marginal_sharpness = compute_marginal_sharpness(y_te, y_range)
-
     # Unpack metrics from the list of dictionaries into lists of metrics
     def dictlist_to_listdict(metrics_list, key):
         return [m[key] if m and key in m else None for m in metrics_list]
     
     save_dic = {}
+    if hasattr(final_model, 'best_va_model'):
+        # Take the first element of the metric list as the final model metrics
+        metrics_final_model = metrics_controlled[0]
+        metrics_controlled = metrics_controlled[1:]  # Remove final model from controlled list
+        metrics_final_model = {k.replace('_controlled', ''): v for k, v in metrics_final_model.items()}
+
+        for key, value in metrics_final_model.items():
+            save_dic[key] = value
 
     # Define keys for unpacking
     controlled_metric_keys = [
@@ -647,6 +659,7 @@ if __name__ == "__main__":
     print(f"Results saved to {save_file_name}")
 
     # restore stdout/stderr and close the log file
-    sys.stdout = old_stdout
-    sys.stderr = old_stderr
-    log_f.close()
+    if not args.debug:
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
+        log_f.close()
