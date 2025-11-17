@@ -556,7 +556,6 @@ def main(from_main_py=False, args=None, inference_only=False):
                 else:
                     gen_model(dataset, seed, f_path, device, train_val_data=(x_tr, x_va, y_tr, y_va)) #Technically wrong, needs to use consistent model, but very little diff
             with open(f_path, 'rb') as pf:
-                print('loading mean model from {}'.format(f_path))
                 mean_model = pkl.load(pf)
                 mean_model.to(device)
 
@@ -635,6 +634,8 @@ def main(from_main_py=False, args=None, inference_only=False):
                 loader_cdf = None
                 cdf_x_va_tensor = None
                 cdf_y_va_tensor = None
+                # for accessing feature size
+                cdf_x_tr_tensor = torch.load('maqr/cdf_data/{}_{}_cdf_x_tr.pt'.format(dataset, seed))
 
             """ training quantile model """
             lr = args.lr
@@ -653,7 +654,7 @@ def main(from_main_py=False, args=None, inference_only=False):
             # cdf_model = cdf_model.to(device)
             # cdf_optimizer = torch.optim.Adam(cdf_model.parameters(), lr=lr, weight_decay=wd)
             if from_main_py:
-                cdf_model = QModelEns(input_size=x_tr.shape[1],
+                cdf_model = QModelEns(input_size=cdf_x_tr_tensor.shape[1],
                                     output_size=1, hidden_size=args.hs,
                                     num_layers=args.nl,
                                     lr=args.lr, wd=args.wd,
