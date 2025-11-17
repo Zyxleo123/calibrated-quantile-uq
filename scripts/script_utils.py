@@ -1,6 +1,5 @@
 import subprocess
 from typing import Dict, List, Optional
-from plots.plot_metrics import plot_training_stats, compare_ece_sharpness, calibration_plot, plot_ece_sharpness, overlap_ece_sharpness
 from plots.plot_utils import load_pickle
 import os
 
@@ -95,6 +94,7 @@ def pick_free_gpu_round_robin(min_free_mb: int = 1000, choices=None) -> Optional
 	return selected
 
 RESULT_BASE = os.path.join(os.environ["SCRATCH"], "results")
+# RESULT_BASE = os.path.join("~/results")
 
 DEFAULT_VALUE = {
     "num_ens": 1,
@@ -124,10 +124,9 @@ TEST_HYPERPARAMS = {
 	"num_ep": [5],
 }
 
-SEEDS_HYPERPARAMS = {
+# gpu24 done
+MAQR_QR_HYPERPARAMS = {
     "skip_existing": [1],
-    "data": ["protein", "boston", "concrete", "energy", "kin8nm", "naval", "power", "wine", "yacht",
-			 "diamonds", "facebook", "elevator", "fusion"],
     "lr": [1e-3],
     "bs": [64],
     "batch_norm": [0],
@@ -139,8 +138,164 @@ SEEDS_HYPERPARAMS = {
     "hs": [256],
     "residual": [1],
     "seed": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-    "loss": ["maqr", "batch_qr", "batch_int", "batch_cal", "QRT"],
+    "loss": ["maqr", "batch_qr"],
+    "data": ["protein", "boston", "concrete", "energy", "facebook", "kin8nm", "naval", "power", "elevator", "wine", "yacht",
+			 "diamonds", "fusion"],
 }
+
+# gpu23 done
+INT_CAL_HYPERPARAMS = {
+    "skip_existing": [1],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "nl": [8],
+    "hs": [256],
+    "residual": [1],
+    "seed": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    "loss": ["batch_int", "batch_cal"],
+    "data": ["protein", "boston", "concrete", "energy", "facebook", "kin8nm", "naval", "power", "elevator", "wine", "yacht",
+			 "diamonds", "fusion"],
+}
+
+# gpu21 done
+QRT_HYPERPARAMS = {
+    "skip_existing": [1],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "nl": [8],
+    "hs": [256],
+    "residual": [1],
+    "seed": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    "loss": ["batch_QRT"],
+    "data": ["protein", "boston", "concrete", "energy", "facebook", "kin8nm", "naval", "power", "elevator", "wine", "yacht",
+			 "diamonds", "fusion"],
+}
+# QRT_QRTC_HYPERPARAMS = {
+#     "skip_existing": [1],
+#     "lr": [1e-3],
+#     "bs": [64],
+#     "batch_norm": [0],
+#     "layer_norm": [0],
+#     "dropout": [0.0],
+#     "num_ens": [1],
+#     "boot": [0],
+#     "nl": [8],
+#     "hs": [256],
+#     "residual": [1],
+#     "seed": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+#     "loss": ["batch_QRT", "batch_QRTC"],
+#     "data": ["protein", "boston", "concrete", "energy", "facebook", "kin8nm", "naval", "power", "elevator", "wine", "yacht",
+# 			 "diamonds", "fusion"],
+# }
+
+# gpu31
+CALIPSO_HYPERPARAMS = {
+    "skip_existing": [1],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "nl": [8],
+    "hs": [256],
+    "residual": [1],
+    "seed": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    "loss": ["calipso"],
+    "data": ["protein", "boston", "concrete", "energy", "facebook", "kin8nm", "naval", "power", "elevator", "wine", "yacht",
+			 "diamonds", "fusion"],
+}
+
+# gpu22 and gpu31 (now running)
+MPAICFA_HYPERPARAMS = {
+    "skip_existing": [1],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "nl": [8],
+    "hs": [256],
+    "residual": [1],
+    "seed": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    "loss": ["mpaic"],
+	"alpha": [0.2, 0.4, 0.6, 0.8, 0.95, 1.0],
+    # "data": ["protein", "boston", "concrete", "energy", "facebook", "kin8nm", "naval", "power", "elevator", "wine", "yacht",
+	# 		 "diamonds", "fusion"],
+	"data": ['facebook']
+}
+
+MPAICFU_HYPERPARAMS = {
+    "skip_existing": [1],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "nl": [8],
+    "hs": [256],
+    "residual": [1],
+    "seed": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    "loss": ["mpaic"],
+	"alpha": [0.6, 0.2, 0.4, 0.8, 0.95, 1.0],
+    # "data": ["protein", "boston", "concrete", "energy", "facebook", "kin8nm", "naval", "power", "elevator", "wine", "yacht",
+	# 		 "diamonds", "fusion"],
+	"data": ['fusion']
+}
+
+OPTIMIZER_OPTIONS = ["adam", "sgd", "adamw", "rmsprop"]
+
+OPTIM_HYPERPARAMS = {
+    "skip_existing": [1],
+    "lr": [1e-3],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "nl": [8],
+    "hs": [256],
+    "residual": [1],
+    "seed": [0, 1, 2],
+	"optimizer": OPTIMIZER_OPTIONS,
+    "loss": ["batch_qr"],
+	"data": ["concrete", "kin8nm", "protein"],
+}
+
+LR_HYPERPARAMS = {
+    "skip_existing": [1],
+    "lr": [5e-4, 1e-3, 5e-3, 1e-2],
+    "bs": [64],
+    "batch_norm": [0],
+    "layer_norm": [0],
+    "dropout": [0.0],
+    "num_ens": [1],
+    "boot": [0],
+    "nl": [8],
+    "hs": [256],
+    "residual": [1],
+    "seed": [0, 1, 2],
+    "optimizer": ["adam"],
+    "loss": ["batch_qr"],
+    "data": ["concrete", "kin8nm", "protein"],
+}
+
 
 NL_HS_COMBINATIONS = [
 	(1, 32),
@@ -151,57 +306,24 @@ NL_HS_COMBINATIONS = [
 
 HYPERPARAMS = {
 	"TEST": TEST_HYPERPARAMS,
-    "SEEDS": SEEDS_HYPERPARAMS,
+	"MAQR_QR": MAQR_QR_HYPERPARAMS,
+	"INT_CAL": INT_CAL_HYPERPARAMS,
+	"MPAICFA": MPAICFA_HYPERPARAMS,
+	"MPAICFU": MPAICFU_HYPERPARAMS,
+	"QRT": QRT_HYPERPARAMS,
+	"CALIPSO": CALIPSO_HYPERPARAMS,
+    "OPTIM": OPTIM_HYPERPARAMS,
+    "LR": LR_HYPERPARAMS,
 }
 
-def get_one_hot_param(inputs: dict, default_value_dict: dict) -> Optional[str]:
-    """
-    Return the one-hot parameter if the job configuration is one-hot, else None.
-    Special case: if both 'nl' and 'hs' are non-defaults, check if the combination is valid.
-    """
-    # collect non-default keys
-    non_default_keys = [
-        k for k, v in inputs.items()
-        if k in default_value_dict and v != default_value_dict[k]
-    ]
-
-    if len(non_default_keys) == 0:
-        return "default"
-
-    if len(non_default_keys) == 1:
-        k = non_default_keys[0]
-        return f"{k}-{inputs[k]}"
-
-    if len(non_default_keys) == 2 and set(non_default_keys) == {"nl", "hs"}:
-        nl_val, hs_val = inputs["nl"], inputs["hs"]
-        if (nl_val, hs_val) in NL_HS_COMBINATIONS:  # You’d need to implement this
-            return f"nl-{nl_val}_hs-{hs_val}"
-        return None
-
-    return None
-
-
-def generate_plots_for_pickle(pkl_path: str, out_parent_dir: str):
-    base = os.path.basename(pkl_path)
-    name = base[:-4] if base.lower().endswith(".pkl") else base
-    outdir = os.path.join(out_parent_dir, name)
-    os.makedirs(outdir, exist_ok=True)
-
-    data = load_pickle(pkl_path)
-    plot_training_stats(data, outpath=os.path.join(outdir, "training_stats.png"))
-    # compare_ece_sharpness(data, outpath=os.path.join(outdir, "ece_sharpness_comparison.png"))
-    # calibration_plot(data, outpath=os.path.join(outdir, "calibration_plot.png"))
-    plot_ece_sharpness(data, outpath=os.path.join(outdir, "ece_sharpness_curve.png"))
-
-def generate_overlap_plot(current_pkl_path: str, current_baseline_name: str, baseline_names: List[str], out_parent_dir: str, file_name: str):
-	os.makedirs(out_parent_dir, exist_ok=True)
-
-	pkl_paths = [current_pkl_path.replace(current_baseline_name, bname) for bname in baseline_names]
-	if not all(os.path.exists(p) for p in pkl_paths):
-		return False
-	datas = [load_pickle(p) for p in pkl_paths]
-	overlap_ece_sharpness(datas, baseline_names, outpath=os.path.join(out_parent_dir, file_name))
-	return True
+def get_job_name(inputs: Dict, run_type: str) -> str:
+    if run_type == 'optim':
+        job_name = f"opt-{inputs['optimizer']}"
+    elif run_type == 'lr':
+        job_name = f"lr-{inputs['lr']}"
+    else:
+        job_name = f"nl-{inputs['nl']}_hs-{inputs['hs']}"
+    return job_name
 
 def fix_inputs(inputs: Dict) -> Dict:
 	"""
@@ -213,14 +335,13 @@ def fix_inputs(inputs: Dict) -> Dict:
 		new_inputs["boot"] = 0
 	if inputs["loss"] == "maqr":
 		new_inputs["num_ep"] = 25
-		new_inputs["wait"] = 5
+		new_inputs["wait"] = 200
+	elif inputs["loss"] == "calipso":
+		new_inputs["num_ep"] = 100
+		new_inputs["wait"] = 200
 	else:
 		new_inputs["num_ep"] = 1000
 		new_inputs["wait"] = 200
-	if inputs["loss"] == "calipso":
-		new_inputs["num_ep"] = 100
-		new_inputs["wait"] = 20
-	
 	return new_inputs
 
 def invalid_inputs(inputs: Dict) -> bool:
