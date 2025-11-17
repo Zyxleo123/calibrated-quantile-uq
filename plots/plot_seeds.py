@@ -26,76 +26,7 @@ from plots.plot_utils import (
 from plots.plot_utils import safe_get
 from utils.metrics import compute_igd, compute_gd, compute_hv, compute_igd_plus, compute_gd_plus
 
-def process_hp_dir(hp_dir: Path, key_prefix: str, title_suffix: str, filename_suffix: str, dataset_name: str, hp_config_name: str) -> dict:
-    """
-    Processes a single hyperparameter directory:
-    - Extracts data from pkl files for each method and seed.
-    - Computes multi-objective metrics (IGD, GD, HV) for each seed and reports mean/variance.
-    - Writes a detailed report to a text file.
-    - Generates scatter plots for ECE vs each Y_METRIC, aggregating points from all seeds.
-
-    Args:
-        hp_dir (Path): The path to the current hyperparameter directory.
-        key_prefix (str): Prefix for data keys (e.g., 'recal_').
-        title_suffix (str): Suffix for plot titles (e.g., ' (Recalibrated)').
-        filename_suffix (str): Suffix for output filenames.
-        dataset_name (str): Name of the dataset.
-        hp_config_name (str): Name of the hyperparameter configuration.
-
-    Returns:
-        Dict[str, Dict[str, Dict[str, List[Tuple[float, float]]]]]: A dictionary with data
-        structured as {seed: {y_metric: {method: [(ece, y_value), ...]}}}.
-    """
-    print(f"\nProcessing: {dataset_name} / {hp_config_name}")
-
-    # Stores (ece, y_metric_value) pairs for plotting and multi-objective metrics
-    # Structure: seed -> y_metric_name -> method_name -> [(ece, y_value), ...]
-    method_ece_y_points = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-
-    all_y_metrics_to_process = Y_METRICS
-
-    # for metric in PERFORMANCE_METRICS:
-    #     for method in BASELINE_NAMES:
-    #         with open(f'metric_log/{method}_{metric}_{hp_config_name}{filename_suffix}.txt', 'w') as log_f:
-    #             pass
-    # --- Step 1 & 2: Iterate and Load Data ---
-    # Find and load pkl files for each method and seed
-    for method in BASELINE_NAMES:
-        for seed in SEEDS:
-            hp_filename = HP_DIR_NAME_TO_FILE_NAME[hp_config_name]
-            old_pkl_filenames = glob.glob(os.path.join(hp_dir, f"*loss{method}*{seed}*.pkl"))
-            pkl_filenames = [pkl_filename for pkl_filename in old_pkl_filenames if hp_filename in os.path.basename(pkl_filename) and dataset_name in os.path.basename(pkl_filename)]
-            if len(old_pkl_filenames) != len(pkl_filenames):
-                print(f"  Note: Filtered out {set(old_pkl_filenames) - set(pkl_filenames)} not matching hp config or dataset name {hp_filename}/{dataset_name} in {hp_dir}.")
-            pkl_filenames = [pkl_filename for pkl_filename in pkl_filenames if 'models.pkl' not in os.path.basename(pkl_filename)]
-
-            if not pkl_filenames:
-                print(f"  - {os.path.join(hp_dir, f'*loss{method}*{seed}*.pkl')} not found. Skipping {method} {seed}.")
-                continue
-            pkl_path = pkl_filenames[0] # Take the first match
-            try:
-                data = load_pickle(pkl_path)
-                print(f"  Loaded {pkl_path}")
-            except Exception as e:
-                print(f"  Error loading or processing {pkl_path}: {e}")
-                continue # Skip to the next file if there's an error
-
-            te_ece = data[f'{key_prefix}te_ece_controlled']
-            va_ece = data[f'va_ece_controlled'] # Needed for exceedance calculation
-
-            # Store exceedance metric under the specific seed
-            y_exceedance = [max(te - va, 0) for te, va in zip(te_ece, va_ece) if va < 1]
-            method_ece_y_points[seed]['te_va_ece_exceedance'][method] = [(te, ye) for te, ye, va in zip(te_ece, y_exceedance, va_ece) if va < 1]
-
-            # Store other Y_METRICS under the specific seed
-            for y_metric in Y_METRICS:
-                if y_metric == 'te_va_ece_exceedance':
-                    continue # Already handled above
-                y_val = data[f'{key_prefix}{y_metric}']
-                method_ece_y_points[seed][y_metric][method] = [(te, yv) for te, yv, va in zip(te_ece, y_val, va_ece) if va < 1]
-
-    # --- Step 3: Generate Report Text File ---
-    report_filepath = hp_dir / f"metrics_{dataset_name}_{HP_DIR_NAME_TO_FILE_NAME[hp_config_name]}{filename_suffix}.txt"
+def generate_report(report_filepath, dataset_name, hp_config_name, hp_dir, method_ece_y_points, title_suffix, filename_suffix):
     with open(report_filepath, 'w') as f:
         f.write(f"Performance Report for {dataset_name} / {hp_config_name}{title_suffix}\n")
         f.write("=" * 80 + "\n\n")
@@ -110,9 +41,6 @@ def process_hp_dir(hp_dir: Path, key_prefix: str, title_suffix: str, filename_su
 
             # Loop over each seed to compute MOO metrics independently
             for seed in SEEDS:
-                if seed not in method_ece_y_points or y_metric_name not in method_ece_y_points[seed]:
-                    continue
-                
                 # Get points for the current seed: {method: [(x,y), ...]}
                 current_method_points_for_moo = method_ece_y_points[seed][y_metric_name]
 
@@ -127,11 +55,11 @@ def process_hp_dir(hp_dir: Path, key_prefix: str, title_suffix: str, filename_su
                 except Exception as e:
                     print(f"  Error computing IGD+ for {hp_dir}, seed {seed}, y_metric {y_metric_name}: {e}")
                 try:
-                    gd_scores = compute_gd(current_method_points_for_moo, ece_step_size=0.001)
+                    gd_scores = compute_gd(current_method_points_for_moo)
                 except Exception as e:
                     print(f"  Error computing GD for {hp_dir}, seed {seed}, y_metric {y_metric_name}: {e}")
                 try:
-                    gdp_scores = compute_gd_plus(current_method_points_for_moo, ece_step_size=0.001)
+                    gdp_scores = compute_gd_plus(current_method_points_for_moo)
                 except Exception as e:
                     print(f"  Error computing GD+ for {hp_dir}, seed {seed}, y_metric {y_metric_name}: {e}")
                 try:
@@ -161,10 +89,14 @@ def process_hp_dir(hp_dir: Path, key_prefix: str, title_suffix: str, filename_su
                     else:
                         scores[f'{metric}_mean'] = np.nanmean(score_list)
                         scores[f'{metric}_std'] = np.std(score_list) / np.sqrt(len(score_list))
-                    # log the mean score & seed number used to take average in separate file
-                    if y_metric_name == 'te_sharp_score_controlled': # only log once per method/metric/hp_config
-                        with open(f'metric_log/{method}_{metric}_{hp_config_name}{filename_suffix}.txt', 'a') as log_f:
-                            log_f.write(f"{dataset_name} {scores[f'{metric}_mean']} {len(score_list)}\n")
+                    # log the scores
+                    if y_metric_name in ['te_sharp_score_controlled', 'te_variance_controlled', 'te_mpiw_controlled']:
+                        # save_dir = f'metric_log/{y_metric_name.replace("te_", "").replace("_controlled", "")}/'
+                        save_dir = os.path.join('metric_log', args.exp_name, y_metric_name.replace("te_", "").replace("_controlled", ""))
+                        os.makedirs(save_dir, exist_ok=True)
+                        with open(os.path.join(save_dir, f"{method}_{metric}_{hp_config_name}{filename_suffix}.txt"), 'a') as log_f:
+                            log_f.write(f"{dataset_name} {scores[f'{metric}_mean']} {len(score_list)} "
+                                        + ' '.join([f" {s}" for s in score_list]) + '\n')
 
                     method_scores[metric][method] = scores[f'{metric}_mean']
 
@@ -214,6 +146,70 @@ def process_hp_dir(hp_dir: Path, key_prefix: str, title_suffix: str, filename_su
         print(f"Report saved to {report_filepath}")
 
 
+
+def process_hp_dir(hp_dir: Path, key_prefix: str, title_suffix: str, filename_suffix: str, dataset_name: str, hp_config_name: str) -> dict:
+    print(f"\nProcessing: {dataset_name} / {hp_config_name}")
+
+    # Stores (ece, y_metric_value) pairs for plotting and multi-objective metrics
+    # Structure: seed -> y_metric_name -> method_name -> [(ece, y_value), ...]
+    method_ece_y_points = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    method_ece_y_point_best_model = defaultdict(lambda: defaultdict(lambda: defaultdict(tuple)))
+
+    all_y_metrics_to_process = Y_METRICS
+
+    # --- Step 1 & 2: Iterate and Load Data ---
+    # Find and load pkl files for each method and seed
+    for method in BASELINE_NAMES:
+        for seed in SEEDS:
+            hp_filename = HP_DIR_NAME_TO_FILE_NAME[hp_config_name]
+            old_pkl_filenames = glob.glob(os.path.join(hp_dir, f"*loss{method}*{seed}*.pkl"))
+            pkl_filenames = [pkl_filename for pkl_filename in old_pkl_filenames if hp_filename in os.path.basename(pkl_filename) and dataset_name in os.path.basename(pkl_filename)]
+            if len(old_pkl_filenames) != len(pkl_filenames):
+                print(f"  Note: Filtered out {set(old_pkl_filenames) - set(pkl_filenames)} not matching hp config or dataset name {hp_filename}/{dataset_name} in {hp_dir}.")
+            pkl_filenames = [pkl_filename for pkl_filename in pkl_filenames if 'models' not in os.path.basename(pkl_filename)]
+
+            if not pkl_filenames:
+                print(f"  - {os.path.join(hp_dir, f'*loss{method}*{seed}*.pkl')} not found. Skipping {method} {seed}.")
+                continue
+            pkl_path = pkl_filenames[0]
+            try:
+                data = load_pickle(pkl_path)
+                print(f"  Loaded {pkl_path}")
+            except Exception as e:
+                print(f"  Error loading or processing {pkl_path}: {e}")
+                continue # Skip to the next file if there's an error
+
+            te_ece = data[f'{key_prefix}te_ece_controlled']
+            va_ece = data[f'va_ece_controlled']
+            try:
+                te_ece_best_model = data[f'{key_prefix}te_ece']
+                va_ece_best_model = data[f'va_ece']
+            except KeyError as e:
+                te_ece_best_model = np.nan
+                va_ece_best_model = np.nan
+
+            # Store exceedance metric under the specific seed
+            y_exceedance = [max(te - va, 0) for te, va in zip(te_ece, va_ece) if va < 0.15]
+            method_ece_y_points[seed]['te_va_ece_exceedance'][method] = [(te, ye) for te, ye, va in zip(te_ece, y_exceedance, va_ece)]
+            method_ece_y_point_best_model[seed]['te_va_ece_exceedance'][method] = (te_ece_best_model, max(te_ece_best_model - va_ece_best_model, 0))
+
+
+            # Store other Y_METRICS under the specific seed
+            for y_metric in Y_METRICS:
+                if y_metric == 'te_va_ece_exceedance':
+                    continue # Already handled above
+                y_val = data[f'{key_prefix}{y_metric}']
+                method_ece_y_points[seed][y_metric][method] = [(te, yv) for te, yv, va in zip(te_ece, y_val, va_ece)]
+                try:
+                    y_val_best_model = data[f'{key_prefix}{y_metric.replace("_controlled", "")}']
+                    method_ece_y_point_best_model[seed][y_metric][method] = (te_ece_best_model, y_val_best_model)
+                except KeyError:
+                    method_ece_y_point_best_model[seed][y_metric][method] = (te_ece_best_model, np.nan)
+
+
+    # --- Step 3: Generate Report Text File ---
+    report_filepath = hp_dir / f"metrics_{dataset_name}_{HP_DIR_NAME_TO_FILE_NAME[hp_config_name]}{filename_suffix}.txt"
+    generate_report(report_filepath, dataset_name, hp_config_name, hp_dir, method_ece_y_points, title_suffix, filename_suffix)
     # --- Step 4: Generate Scatter Plots ---
     for y_metric_name in all_y_metrics_to_process:
         fig, ax = plt.subplots(figsize=(10, 8))
@@ -226,11 +222,11 @@ def process_hp_dir(hp_dir: Path, key_prefix: str, title_suffix: str, filename_su
         for method in baseline_order_flipped:
             # Collect points from all seeds for the current method
             all_points_for_method = []
+            all_points_for_method_best_model = []
             for seed in SEEDS:
                 if seed in method_ece_y_points and y_metric_name in method_ece_y_points[seed]:
-                    points = method_ece_y_points[seed][y_metric_name].get(method, [])
-                    if points:
-                        all_points_for_method.extend(points)
+                    all_points_for_method.extend(method_ece_y_points[seed][y_metric_name][method])
+                    all_points_for_method_best_model.append(method_ece_y_point_best_model[seed][y_metric_name][method])
 
             if all_points_for_method:
                 has_data_for_plot = True
@@ -251,15 +247,28 @@ def process_hp_dir(hp_dir: Path, key_prefix: str, title_suffix: str, filename_su
                 
                 ax.scatter(
                         x_coords, y_coords,
-                        # label=TITLE_METHODS[method],
+                        label=TITLE_METHODS[method],
                         s=50,
                         color=METHOD_COLORS[method],
                         marker=METHOD_MARKERS[method],
                     )
+                # Plot best model point
+                try:
+                    best_model_x, best_model_y = zip(*all_points_for_method_best_model)
+                except ValueError:
+                    best_model_x, best_model_y = [], []
+                ax.scatter(
+                        best_model_x, best_model_y,
+                        s=150,
+                        color=METHOD_COLORS[method],
+                        marker=METHOD_MARKERS[method],
+                        edgecolors='black',
+                )
                 
                 all_x_coords.extend(x_coords)
                 all_y_coords.extend(y_coords)
 
+        # Set labels and axis limits
         if has_data_for_plot:
             ax.set_title(dataset_name.capitalize(), fontsize=20)
             ax.tick_params(axis='both', labelsize=20)
@@ -278,14 +287,19 @@ def process_hp_dir(hp_dir: Path, key_prefix: str, title_suffix: str, filename_su
                 x_buffer = (max_95_x - min_x) * 0.1 if (max_95_x - min_x) > 0 else 0.1
                 y_buffer = (max_90_y - min_10_y) * 1 if (max_90_y - min_10_y) > 0 else 0.1
 
-                min_y = 0 if y_metric_name != 'te_va_ece_exceedance' else -0.01
+                if dataset_name not in ['concrete', 'kin8nm', 'power', 'boston', 'wine', 'elevator', 'protein'] \
+                and filename_suffix == '':
+                    min_y, max_y = max(0, min_10_y - y_buffer), min(0.05, max_90_y + y_buffer)
+                else:
+                    min_y, max_y = min_10_y - y_buffer, max_90_y + y_buffer
+
 
                 ax.set_xlim(min_x - x_buffer, max_95_x + x_buffer)
-                ax.set_ylim(min_10_y - y_buffer, max_90_y + y_buffer)
-
+                ax.set_ylim(min_y, max_y)
             ax.grid(True, linestyle='--', alpha=0.6)
             plt.tight_layout()
             plot_filename = hp_dir / f"plot_{dataset_name}_{hp_config_name}_{y_metric_name}{filename_suffix}.pdf"
+            plt.legend(fontsize=12)
             plt.savefig(plot_filename)
             print(f"Plot saved to {plot_filename}")
         else:

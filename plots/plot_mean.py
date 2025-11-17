@@ -2,18 +2,20 @@ import os, sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from glob import glob
 from plots.plot_utils import BASELINE_NAMES, TITLE_METHODS
+from collections import defaultdict
+
 def write_latex_table(metric_method_means, metric_method_ste, filename="results_table.tex"):
     """
     Writes a LaTeX table with IGD, GD, HV metrics.
     Only the method with minimum (for ↓) or maximum (for ↑) mean is bolded.
     """
-
     metrics = [
         ("IGD", "IGD $(\\downarrow)$", "min"),
         ("GD", "GD $(\\downarrow)$", "min"),
         ("HV", "HV ($\\uparrow$)", "max")
     ]
 
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
     with open(filename, "w") as f:
         # Header
         f.write("\\begin{tabular}{l@{\\hspace{-0.1ex}}l" + "c" * len(BASELINE_NAMES) + "r}\n")
@@ -36,7 +38,7 @@ def write_latex_table(metric_method_means, metric_method_ste, filename="results_
             values = []
             for method in BASELINE_NAMES:
                 mean, ste = means[method], stes[method]
-                val_str = f"{mean:.4f} $\\pm$ {ste:.4f}"
+                val_str = f"{mean} $\\pm$ {ste}"
 
                 if method == best_method:
                     val_str = "\\textbf{" + val_str + "}"
@@ -50,60 +52,84 @@ def write_latex_table(metric_method_means, metric_method_ste, filename="results_
         # Footer
         f.write("\\end{tabular}\n")
 
-if __name__ == "__main__":
+def main(args):
+    all_metric_files = glob(os.path.join("metric_log", args.n, args.base_metric, "*.txt"))
+    if args.r:
+        all_metric_files = [f for f in all_metric_files if 'recalibrated' in f]
+    else:
+        all_metric_files = [f for f in all_metric_files if 'recalibrated' not in f]
 
-    all_metric_files = glob("metric_log/*.txt")
-    nl8_hs256_files = [f for f in all_metric_files if 'nl-8_hs-256' in f and 'recalibrated' not in f]
+    # nl8_hs256_files = [f for f in all_metric_files if 'nl-8_hs-256' in f and 'recalibrated' not in f]
+    nl8_hs256_files = [f for f in all_metric_files if 'nl-8_hs-256' in f]
 
-    all_numbers = []
+    all_numbers = defaultdict(list)
     for f in nl8_hs256_files:
         with open(f, 'r') as file:
+            if 'HV' in f:
+                continue
             lines = file.readlines()
             for line in lines:
-                dataset, number, n_seeds = line.strip().split()
-                all_numbers.extend([float(number)] * int(n_seeds))
+                # dataset mean n_seeds number1 number2 ... numbern
+                dataset, mean, n_seeds, *rest = line.strip().split()
+                all_numbers[dataset].extend([float(x) for x in rest])
 
     # fit min-max scaler and mean-std scaler
     import numpy as np
     from sklearn.preprocessing import MinMaxScaler, StandardScaler
-    all_numbers = np.array(all_numbers).reshape(-1, 1)
-    min_max_scaler = MinMaxScaler()
-    min_max_scaler.fit(all_numbers)
+    min_max_scalers = defaultdict(MinMaxScaler)
+    for dataset in all_numbers:
+        numbers = np.array(all_numbers[dataset]).reshape(-1, 1)
+        min_max_scalers[dataset].fit(numbers)
+    # medians = {}
+    # for dataset in all_numbers:
+    #     numbers = np.array(all_numbers[dataset])
+    #     medians[dataset] = np.median(numbers)
 
     from plots.plot_utils import PERFORMANCE_METRICS, BASELINE_NAMES
 
     # for each file, apply 2 scalers and compute mean and ste (std / sqrt(n_seeds))
-    from collections import defaultdict
     metric_method_means = defaultdict(dict)
     metric_method_ste = defaultdict(dict)
     for f in nl8_hs256_files:
-        method_name = [name for name in BASELINE_NAMES if name in f][0]
-        metric_name = [name for name in PERFORMANCE_METRICS if name in f][0]
+        parts = os.path.basename(f).split('_')
+        metric_name = (set(parts) & set(PERFORMANCE_METRICS)).pop()
+        metric_name_idx = parts.index(metric_name)
+        method_name = '_'.join(parts[:metric_name_idx])
+
         print(f"Processing {f} for method {method_name}, metric {metric_name}")
         with open(f, 'r') as file:
             lines = file.readlines()
-            total_min_max = 0.0
-            total_std = 0.0
+            total_scaled = 0.0
             total_seeds = 0
             scaled_numbers = []
             for line in lines:
-                dataset, number, n_seeds = line.strip().split()
-                if number == 'nan':
-                    print(f"{f}: {dataset} is nan, skip")
-                    continue
-                number = float(number)
-                n_seeds = int(n_seeds)
+                dataset, _, _, *rest = line.strip().split()
                 if metric_name != 'HV':
-                    number_min_max = min_max_scaler.transform(np.array([[number]]))[0][0]
+                    scaler = min_max_scalers[dataset]
+                    scaled_nums = scaler.transform(np.array([float(x) for x in rest]).reshape(-1, 1)).flatten()
+                    # scaled_nums = [float(x) / medians[dataset] for x in rest]
                 else:
-                    number_min_max = number  # for HV, higher is better, do not scale
-                total_min_max += number_min_max * n_seeds
-                total_seeds += n_seeds
-                scaled_numbers.extend([number_min_max] * n_seeds)
-            mean_min_max = total_min_max / total_seeds
-            mean_std = np.std(scaled_numbers, ddof=1) / (total_seeds ** 0.5)
+                    scaled_nums = [float(x) for x in rest]
+                total_scaled += sum(scaled_nums)
+                scaled_numbers.extend(scaled_nums)
+            mean_min_max = np.mean(scaled_numbers)
+            mean_std = np.std(scaled_numbers, ddof=1) / (len(scaled_numbers) ** 0.5)
             metric_method_means[metric_name][method_name] = mean_min_max
             metric_method_ste[metric_name][method_name] = mean_std
     
-    write_latex_table(metric_method_means, metric_method_ste, filename="results_table.tex")
+    write_latex_table(metric_method_means, metric_method_ste, 
+                    filename=os.path.join("metric_log", args.n, args.base_metric, 'tables',
+                                           f"results_table{'_recalibrated' if args.r else ''}.tex"))
+
+BASE_METRICS = ['sharp_score', 'variance', 'mpiw']
+    
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-r', default=False, action='store_true')
+    parser.add_argument('-n', type=str, required=True)
+    args = parser.parse_args()
+    for base_metric in BASE_METRICS:
+        args.base_metric = base_metric
+        main(args)
 
