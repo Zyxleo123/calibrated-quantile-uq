@@ -19,7 +19,7 @@ from utils.misc_utils import (
     compute_marginal_sharpness
 )
 from recal import iso_recal
-from utils.q_model_ens import QModelEns, EnhancedMLP, QRTNormalAdapterVanilla
+from utils.q_model_ens import QModelEns, EnhancedMLP, QRTNormalAdapterVanilla, mPAICModel
 from losses import (
     cali_loss,
     batch_cali_loss,
@@ -64,6 +64,8 @@ def get_loss_fn(loss_name):
     elif loss_name == "batch_QRT":
         fn = None
     elif loss_name == "batch_QRTC":
+        fn = None
+    elif loss_name == "mpaic":
         fn = None
     else:
         raise ValueError("loss arg not valid")
@@ -118,6 +120,7 @@ def parse_args():
     parser.add_argument("--nl", type=int, default=8, help="number of layers")
     parser.add_argument("--hs", type=int, default=256, help="hidden size")
 
+    parser.add_argument("--optimizer", type=str, default="adam", help="optimizer to use")
     parser.add_argument("--lr", type=float, default=1e-3, help="learning rate")
     parser.add_argument("--wd", type=float, default=0.0, help="weight decay")
     parser.add_argument("--bs", type=int, default=64, help="batch size")
@@ -203,6 +206,8 @@ def parse_args():
     # MAQR-specific arguments
     parser.add_argument("--dist_type", type=str, default="kernel", help="distance type for MAQR")
     parser.add_argument("--num_in_bin", type=int, default=40, help="number of points in bin for MAQR")
+    # mPAIC-specific arguments
+    parser.add_argument("--alpha", type=float, default=0.1, help="alpha parameter for mPAIC")
     args = parser.parse_args()
 
     if "penalty" in args.loss:
@@ -247,6 +252,13 @@ if __name__ == "__main__":
     print("Running new version")
 
     args = parse_args()
+    # CHANGE 1: For calipso/maqr, adjust epochs to 1000 and calculate data partitions.
+    if args.loss in ['maqr']:
+    # if args.loss in ['maqr', 'calipso']:
+        original_num_ep = args.num_ep
+        args.num_ep = 1000
+        num_parts = 1000 // original_num_ep
+
     class VanillaModel(nn.Module):
         def __init__(self, nfeatures):
             super().__init__()
@@ -293,7 +305,6 @@ if __name__ == "__main__":
     # Save file name
     if "penalty" not in args.loss:
         save_file_name = get_save_file_name(args)
-
     else:
         # penalizing sharpness
         if args.sharp_all is not None and args.sharp_all:
@@ -434,6 +445,21 @@ if __name__ == "__main__":
                 x_cal=x_cal, 
                 y_cal=y_cal
             )
+        elif args.loss == "mpaic":
+            model_ens = mPAICModel(
+                input_size=dim_x,
+                hidden_size=args.hs,
+                num_layers=args.nl,
+                lr=args.lr,
+                wd=args.wd,
+                device=args.device,
+                residual=args.residual,
+                batch_norm=args.batch_norm,
+                layer_norm=args.layer_norm,
+                dropout=args.dropout,
+                activation=args.activation,
+                alpha=args.alpha
+            )
         else:
             model_ens = QModelEns(
                 input_size=dim_x + 1,
@@ -449,6 +475,7 @@ if __name__ == "__main__":
                 layer_norm=args.layer_norm,
                 dropout=args.dropout,
                 activation=args.activation,
+                optimizer=args.optimizer
             )
 
         # Data loader
@@ -471,6 +498,21 @@ if __name__ == "__main__":
                 )
                 for idxs in rand_idx_list
             ]
+
+    # CHANGE 2: For calipso/maqr, split the training data into sequential parts.
+    x_tr_parts, y_tr_parts = None, None
+    if args.loss in ['maqr']:
+        # Extract the full training dataset from the loader created by the setup functions.
+        # This dataset might be transformed (e.g., for MAQR), so we extract it from the loader.
+        if args.loss == 'maqr':
+            full_tr_dataset_x, full_tr_dataset_y = loader.dataset.tensors
+        if args.loss == 'calipso':
+            full_tr_dataset_x, full_tr_dataset_y = loader.dataset.X, loader.dataset.Y
+
+        # Sequentially split the dataset into parts for per-epoch training.
+        x_tr_parts = torch.chunk(full_tr_dataset_x, num_parts, dim=0)
+        y_tr_parts = torch.chunk(full_tr_dataset_y, num_parts, dim=0)
+
 
     # Loss function
     loss_fn = get_loss_fn(args.loss)
@@ -509,11 +551,23 @@ if __name__ == "__main__":
             # Take train step
             # list of losses from each batch, for one epoch
             ep_train_loss = []
-            if args.loss == 'maqr':
-                for (xi, yi) in loader:
-                    xi, yi = xi.to(args.device), yi.to(args.device)
-                    loss = model_ens.loss(mse_loss_fn, xi, yi, q_list=None, batch_q=True, take_step=True, args=args)
-                    ep_train_loss.append(loss)
+            # CHANGE 3: Modify training loop for calipso/maqr to use data parts.
+            if args.loss in ['maqr']:
+                # For each epoch, create a loader for one sequential part of the training data.
+                part_idx = ep % num_parts
+                current_x_part = x_tr_parts[part_idx]
+                current_y_part = y_tr_parts[part_idx]
+                train_loader_for_epoch = DataLoader(
+                    TensorDataset(current_x_part, current_y_part),
+                    shuffle=True,  # Shuffle within the part is standard for SGD
+                    batch_size=args.bs
+                )
+
+                if args.loss == 'maqr':
+                    for (xi, yi) in train_loader_for_epoch:
+                        xi, yi = xi.to(args.device), yi.to(args.device)
+                        loss = model_ens.loss(mse_loss_fn, xi, yi, q_list=None, batch_q=True, take_step=True, args=args)
+                        ep_train_loss.append(loss)
             elif args.loss == 'calipso':
                 loss = model_ens.train_epoch(loader)
                 ep_train_loss.extend(torch.tensor(loss))
@@ -541,7 +595,7 @@ if __name__ == "__main__":
                         # just doing ordinary random batch
                         for (xi, yi) in loader:
                             xi, yi = xi.to(args.device), yi.to(args.device)
-                            q_list = torch.rand(args.num_q)
+                            q_list = torch.rand(args.num_q, device=args.device)
                             loss = model_ens.loss(
                                 loss_fn,
                                 xi,
@@ -574,7 +628,7 @@ if __name__ == "__main__":
             tr_loss_list.append(ep_tr_loss)
 
 
-            model_ens.update_va_loss(
+            va_loss = model_ens.update_va_loss(
                 loss_fn,
                 x_va_validation_device if args.loss != 'maqr' else cdf_x_va_tensor_validation_device,
                 y_va_validation_device if args.loss != 'maqr' else cdf_y_va_tensor_validation_device,
@@ -584,6 +638,7 @@ if __name__ == "__main__":
                 num_wait=args.wait,
                 args=args,
             )
+            va_loss_list.append(va_loss)
             ece = average_calibration(
                 model_ens,
                 x_va_validation_device,
@@ -592,14 +647,11 @@ if __name__ == "__main__":
                     exp_props=ece_q_list_validation_device,
                     device=validation_device,
                     metric="cal_q",
-                    calipso=args.loss == 'calipso'
+                    calipso=args.loss == 'calipso',
+                    in_batch=True
                 )
             )
-            
-            if ece > args.max_thres:
-                model_ens.use_device(args.device)
-                continue
-            
+
             sharp_score, _ = test_uq(
                 model_ens,
                 x_va_validation_device,
@@ -609,21 +661,32 @@ if __name__ == "__main__":
                 recal_model=None,
                 recal_type=None,
                 output_sharp_score_only=True,
-                in_batch=False,
+                in_batch=True,
             )
 
-            model_ens.use_device(args.device)
+            if ece > args.max_thres:
+                model_ens.use_device(args.device)
+                continue
 
             va_sharp_list.append(sharp_score)
             va_ece_list.append(ece)
+            model_ens.use_device(args.device)
 
-            frontier.insert(ece, sharp_score, deepcopy(model_ens), only_frontier=True)
+            frontier.insert(ece, sharp_score, ep, deepcopy(model_ens), only_frontier=True)
 
         # print(f"Train: {train_time:.2f}, Val: {validation_time:.2f}, Test: {test_time:.2f}")
 
     models = [entry['model'] for entry in frontier.get_entries()]
-    pkl.dump(models, open(save_file_name.replace('.pkl', '_models.pkl'), 'wb'))
-    pkl.dump(model_ens.best_va_model, open(save_file_name.replace('.pkl', '_early_stopped_model.pkl'), 'wb'))
+    final_model = model_ens
+    pkl_data = {
+        "models": models,
+        "final_model": final_model,
+        "tr_loss_list": tr_loss_list,
+        "va_loss_list": va_loss_list,
+        "va_sharp_list": va_sharp_list,
+        "va_ece_list": va_ece_list,
+    }
+    pkl.dump(pkl_data, open(save_file_name.replace('.pkl', '_models.pkl'), 'wb'))
     print(f"Model saved to {save_file_name.replace('.pkl', '_models.pkl')}")
     if args.training_only:
         exit(0)

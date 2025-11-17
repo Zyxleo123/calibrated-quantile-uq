@@ -134,7 +134,7 @@ def test_uq(
     curr_check = check_loss(model, x, y, args)
     curr_int = interval_score(model, x, y, args)
     int_exp_props, int_obs_props, int_cdf_preds = get_obs_props(
-        model, x, y, exp_props=None, device=args.device, type="interval"
+        model, x, y, exp_props=None, device=args.device, type="interval", in_batch=in_batch
     )
     curr_int_cali = torch.mean(torch.abs(int_exp_props - int_obs_props)).item()
 
@@ -522,10 +522,11 @@ def get_save_file_name(args) -> str:
     args["residual"] = bool(args["residual"])
     args["batch_norm"] = bool(args["batch_norm"])
     args["layer_norm"] = bool(args["layer_norm"])
-    save_file_name = "{}/{}_loss{}_ens{}_boot{}_res{}_ln{}_bn{}_dr{}_lr{}_bs{}_nl{}_hs{}_{}.pkl".format(
+    save_file_name = "{}/{}_loss{}_opt{}_ens{}_boot{}_res{}_ln{}_bn{}_dr{}_lr{}_bs{}_nl{}_hs{}_{}.pkl".format(
         args["save_dir"],
         args["data"],
         args["loss"],
+        args["optimizer"],
         args["num_ens"],
         args["boot"],
         args["residual"],
@@ -538,6 +539,8 @@ def get_save_file_name(args) -> str:
         args["hs"],
         args["seed"],
     )
+    if args["loss"] == "mpaic":
+        save_file_name = save_file_name.replace("mpaic", f"mpaic{args['alpha']}")
     return save_file_name
 
 if __name__ == "__main__":
